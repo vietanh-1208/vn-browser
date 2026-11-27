@@ -1,0 +1,24 @@
+[package]
+name = "vn-browser"
+version = "1.1.0"
+edition = "2021"
+description = "VN Browser - Lightweight, full-featured Rust WebView2 browser"
+license = "MIT"
+
+[dependencies]
+tao = "0.38"
+wry = { version = "0.58", features = ["devtools"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "5.0"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["native-tls", "json", "blocking"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_System_Memory"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
