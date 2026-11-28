@@ -116,18 +116,18 @@ pub fn is_blocked_url(url: &str, page_host: &str, enabled: bool, whitelist: &[St
     {
         return false;
     }
+    if page_host == "youtube.com" || page_host.ends_with(".youtube.com") {
+        return false;
+    }
     let lower = url.to_lowercase();
     if lower.contains("affiliatecode=")
         || lower.contains("aff_id=")
         || lower.contains("/popunder")
-        || lower.contains("youtube.com/api/stats/ads")
-        || lower.contains("youtube.com/pagead/")
-        || lower.contains("get_midroll_info")
     {
         return true;
     }
     let host = extract_host(url);
-    if host.is_empty() {
+    if host.is_empty() || host == "youtube.com" || host.ends_with(".youtube.com") {
         return false;
     }
     AD_TRACKER_DOMAINS
@@ -135,9 +135,13 @@ pub fn is_blocked_url(url: &str, page_host: &str, enabled: bool, whitelist: &[St
         .any(|d| host == *d || host.ends_with(&format!(".{}", d)) || host.contains(d))
 }
 
+pub const YOUTUBE_AD_SKIPPER_SCRIPT: &str = include_str!("yt_ad_skipper.js");
+
 pub const ADBLOCK_COSMETIC_SCRIPT: &str = r#"
 (() => {
   if (window.__vnAdblockInjected) return;
+  const h = (location && location.hostname ? location.hostname : '').toLowerCase();
+  if (h === 'youtube.com' || h.endsWith('.youtube.com')) return;
   window.__vnAdblockInjected = true;
   const report = () => {
     try { if (window.ipc) window.ipc.postMessage(JSON.stringify({ type: 'ad_blocked_js' })); } catch (_) {}
@@ -238,18 +242,6 @@ pub const ADBLOCK_COSMETIC_SCRIPT: &str = r#"
   setInterval(sweep, 200);
   if (document.documentElement) {
     new MutationObserver(sweep).observe(document.documentElement, { childList: true, subtree: true });
-  }
-  if (location.hostname.includes('youtube.com')) {
-    setInterval(() => {
-      const skip = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
-      if (skip) { skip.click(); report(); }
-      const player = document.querySelector('.ad-showing video');
-      if (player && isFinite(player.duration) && player.duration > 0 && player.currentTime < player.duration - 0.1) {
-        player.muted = true;
-        player.currentTime = player.duration;
-        report();
-      }
-    }, 300);
   }
 })();
 "#;

@@ -1,7 +1,7 @@
 <resources>
     <style name="Theme.VNBrowser" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="android:statusBarColor">#0B1120</item>
-        <item name="android:navigationBarColor">#0B1120</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="colorPrimary">#10B981</item>
         <item name="colorSecondary">#0EA5E9</item>
     </style>

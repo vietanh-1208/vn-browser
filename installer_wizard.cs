@@ -8,8 +8,8 @@ using Microsoft.Win32;
 
 [assembly: AssemblyTitle("VN Surf Setup")]
 [assembly: AssemblyProduct("VN Surf")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.1.0")]
+[assembly: AssemblyFileVersion("1.2.1.0")]
 
 namespace VNBrowserSetup
 {
@@ -21,7 +21,7 @@ namespace VNBrowserSetup
 
         public InstallerForm()
         {
-            Text = "Cài đặt VN Surf v1.1.0";
+            Text = "Cài đặt VN Surf v1.2.1";
             Size = new Size(480, 240);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -151,9 +151,9 @@ namespace VNBrowserSetup
                 {
                     if (k != null)
                     {
-                        k.SetValue("DisplayName", "VN Browser");
+                        k.SetValue("DisplayName", "VN Surf");
                         k.SetValue("DisplayIcon", exePath + ",0");
-                        k.SetValue("DisplayVersion", "1.1.0");
+                        k.SetValue("DisplayVersion", "1.2.1");
                         k.SetValue("InstallLocation", targetDir);
                     }
                 }

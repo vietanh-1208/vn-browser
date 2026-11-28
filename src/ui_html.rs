@@ -37,13 +37,87 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
   .tabs-bar {
     display: flex;
     align-items: flex-end;
-    gap: 5px;
-    padding: 4px 10px 0 10px;
+    gap: 4px;
+    padding: 6px 0 0 8px;
     height: 40px;
     background: var(--bg);
-    overflow-x: auto;
+    position: relative;
   }
-  .tabs-bar::-webkit-scrollbar { height: 0; }
+  .tabs-scroll {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    overflow-x: auto;
+    max-width: calc(100vw - 180px);
+    height: 100%;
+  }
+  .tabs-scroll::-webkit-scrollbar { height: 0; }
+  .tabbar-drag {
+    flex: 1;
+    min-width: 24px;
+    align-self: stretch;
+  }
+  .win-controls {
+    display: flex;
+    align-items: stretch;
+    align-self: stretch;
+    margin-top: -6px;
+    flex-shrink: 0;
+  }
+  .win-btn {
+    width: 46px;
+    height: 40px;
+    border: none;
+    background: transparent;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0.85;
+    transition: background 0.12s, color 0.12s, opacity 0.12s;
+  }
+  .win-btn:hover {
+    background: var(--bg3);
+    opacity: 1;
+  }
+  .win-btn.win-close:hover {
+    background: #e81123;
+    color: #ffffff;
+    opacity: 1;
+  }
+  .resize-top {
+    position: fixed;
+    top: 0;
+    left: 8px;
+    right: 142px;
+    height: 4px;
+    cursor: ns-resize;
+    z-index: 95;
+  }
+  .resize-nw {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 8px;
+    height: 8px;
+    cursor: nwse-resize;
+    z-index: 96;
+  }
+  .resize-ne {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 6px;
+    cursor: nesw-resize;
+    z-index: 96;
+  }
+  body.maximized .resize-top,
+  body.maximized .resize-nw,
+  body.maximized .resize-ne {
+    display: none;
+  }
   .brand-dot {
     width: 24px;
     height: 24px;
@@ -542,23 +616,26 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
 </style>
 </head>
 <body>
-  <div class="tabs-bar" id="tabsBar"></div>
-  <div class="nav-bar">
+  <div class="resize-nw" onmousedown="if(event.button===0)send({type:'resize_window',dir:'nw'})"></div>
+  <div class="resize-top" onmousedown="if(event.button===0)send({type:'resize_window',dir:'n'})"></div>
+  <div class="resize-ne" onmousedown="if(event.button===0)send({type:'resize_window',dir:'ne'})"></div>
+  <div class="tabs-bar" id="tabsBar" onmousedown="onTabBarMouseDown(event)" ondblclick="onTabBarDblClick(event)"></div>
+  <div class="nav-bar" onmousedown="if(!event.target.closest('.omnibox,button')) send({type:'dismiss_popups'})">
     <button class="icon-btn" title="Quay lại" onclick="send({type:'back'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg></button>
     <button class="icon-btn" title="Tiến tới" onclick="send({type:'forward'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg></button>
     <button class="icon-btn" id="reloadBtn" title="Tải lại / Dừng (Ctrl+R)" onclick="onReloadOrStop()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
     <button class="icon-btn" title="Trang chủ" onclick="send({type:'home'})"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1z"/></svg></button>
-    <div class="omnibox">
+    <div class="omnibox" id="omniboxEl">
       <span id="sslBadge" title="Bảo mật">🔒</span>
       <input id="urlInput" type="text" placeholder="Nhập địa chỉ web hoặc tìm kiếm..." />
       <span class="badge" id="autofillBadge" style="display:none" title="Điền nhanh tài khoản đã lưu" onclick="send({type:'autofill_active'})">🔑 Điền TK</span>
-      <span class="badge" id="translateBadge" style="display:none" title="Dịch trang sang ngôn ngữ khác" onclick="MENU_MODE='translate';send({type:'open_translate_menu'})">🌐 Dịch</span>
+      <span class="badge" id="translateBadge" style="display:none" title="Dịch trang sang ngôn ngữ khác" onclick="send({type:'open_translate_menu'})">🌐 Dịch</span>
       <span class="badge" id="adBadge" title="Chặn quảng cáo & tracker" onclick="send({type:'toggle_panel',panel:'settings'})">🛡️ 0</span>
       <button class="icon-btn" style="width:24px;height:24px" title="Lưu dấu trang (Ctrl+D)" id="bmStar" onclick="send({type:'toggle_bookmark'})">☆</button>
     </div>
     <button class="icon-btn" title="Tải xuống (Ctrl+J)" onclick="send({type:'toggle_panel',panel:'downloads'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
     <button class="icon-btn" title="Dấu trang" onclick="send({type:'toggle_panel',panel:'bookmarks'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
-    <button class="icon-btn" title="Menu VN Browser" onclick="send({type:'toggle_menu'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg></button>
+    <button class="icon-btn" title="Menu VN Surf" onclick="send({type:'toggle_menu'})"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg></button>
   </div>
   <div class="load-track"><div class="load-bar" id="loadBar"></div></div>
   <div class="bookmarks-bar" id="bookmarksBar"></div>
@@ -568,9 +645,7 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
     <button class="btn soft" onclick="findInPage(true)">Sau</button>
     <button class="icon-btn" onclick="send({type:'toggle_find'})">✕</button>
   </div>
-  <div class="suggest-wrap" id="suggestWrap"><div class="suggest-box" id="suggestBox"></div></div>
-  <div class="menu-wrap" id="menuWrap"><div class="menu-box" id="menuBox"></div></div>
-  <div class="content-area" id="contentArea"></div>
+  <div class="content-area" id="contentArea" onmousedown="send({type:'dismiss_popups'})"></div>
   <div class="toast" id="toast"></div>
 
 <script>
@@ -609,27 +684,27 @@ function onReloadOrStop() {
   else send({ type: 'reload' });
 }
 
+function onTabBarMouseDown(e) {
+  if (e.button !== 0) return;
+  if (e.target.closest('.tab, button, .win-btn')) return;
+  send({ type: 'dismiss_popups' });
+  if (e.detail === 1) send({ type: 'drag_window' });
+}
+function onTabBarDblClick(e) {
+  if (e.target.closest('.tab, button, .win-btn')) return;
+  send({ type: 'win_maximize' });
+}
+
 const urlInput = document.getElementById('urlInput');
-const suggestWrap = document.getElementById('suggestWrap');
-const suggestBox = document.getElementById('suggestBox');
 let SUGGESTS = [];
 let SUGGEST_IDX = -1;
 let suggestTimer = null;
 
-function renderSuggests() {
-  if (!SUGGESTS.length || document.activeElement !== urlInput) {
-    suggestWrap.classList.remove('open');
-    suggestBox.innerHTML = '';
-    return;
-  }
-  suggestWrap.classList.add('open');
-  suggestBox.innerHTML = SUGGESTS.map((s, i) => `
-    <div class="suggest-item ${i === SUGGEST_IDX ? 'sel' : ''}" data-idx="${i}" onmousedown="event.preventDefault(); pickSuggest(${i})">
-      <span class="suggest-kind">${s.kind === 'bookmark' ? '★' : (s.kind === 'history' ? '🕒' : '🔍')}</span>
-      <span class="suggest-label">${esc(s.label)}</span>
-      ${s.url && s.url !== s.label ? `<span class="suggest-sub">${esc(s.url)}</span>` : ''}
-    </div>
-  `).join('');
+function reportOmniboxRect() {
+  const ob = document.getElementById('omniboxEl');
+  if (!ob) return null;
+  const r = ob.getBoundingClientRect();
+  return { x: Math.round(r.left), w: Math.round(r.width) };
 }
 
 function pickSuggest(i) {
@@ -638,7 +713,7 @@ function pickSuggest(i) {
   const target = s.url || s.label;
   SUGGESTS = [];
   SUGGEST_IDX = -1;
-  renderSuggests();
+  send({ type: 'suggest', query: '' });
   send({ type: 'navigate', input: target });
   urlInput.blur();
 }
@@ -646,7 +721,10 @@ function pickSuggest(i) {
 window.__vnShowSuggestions = function(items) {
   SUGGESTS = items || [];
   SUGGEST_IDX = -1;
-  renderSuggests();
+  if (document.activeElement !== urlInput && SUGGESTS.length) {
+    SUGGESTS = [];
+    send({ type: 'suggest', query: '' });
+  }
 };
 
 urlInput.addEventListener('input', () => {
@@ -654,35 +732,34 @@ urlInput.addEventListener('input', () => {
   const q = urlInput.value.trim();
   if (!q) {
     SUGGESTS = [];
-    renderSuggests();
+    SUGGEST_IDX = -1;
     send({ type: 'suggest', query: '' });
     return;
   }
-  suggestTimer = setTimeout(() => send({ type: 'suggest', query: q }), 110);
+  const box = reportOmniboxRect();
+  suggestTimer = setTimeout(() => send({ type: 'suggest', query: q, ox: box ? box.x : 140, ow: box ? box.w : 640 }), 95);
 });
 
 urlInput.addEventListener('blur', () => {
   setTimeout(() => {
     SUGGESTS = [];
     SUGGEST_IDX = -1;
-    renderSuggests();
     send({ type: 'suggest', query: '' });
-  }, 120);
+  }, 160);
 });
 
 urlInput.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown' && SUGGESTS.length) {
     e.preventDefault();
     SUGGEST_IDX = (SUGGEST_IDX + 1) % SUGGESTS.length;
-    renderSuggests();
+    send({ type: 'select_suggest_idx', idx: SUGGEST_IDX });
   } else if (e.key === 'ArrowUp' && SUGGESTS.length) {
     e.preventDefault();
     SUGGEST_IDX = (SUGGEST_IDX - 1 + SUGGESTS.length) % SUGGESTS.length;
-    renderSuggests();
+    send({ type: 'select_suggest_idx', idx: SUGGEST_IDX });
   } else if (e.key === 'Escape') {
     SUGGESTS = [];
     SUGGEST_IDX = -1;
-    renderSuggests();
     send({ type: 'suggest', query: '' });
     urlInput.blur();
   } else if (e.key === 'Enter') {
@@ -690,7 +767,7 @@ urlInput.addEventListener('keydown', (e) => {
       pickSuggest(SUGGEST_IDX);
     } else {
       SUGGESTS = [];
-      renderSuggests();
+      SUGGEST_IDX = -1;
       send({ type: 'suggest', query: '' });
       send({ type: 'navigate', input: urlInput.value });
       urlInput.blur();
@@ -735,11 +812,17 @@ const ACCENTS = [
 window.__vnUpdateState = function(st) {
   STATE = st;
   document.body.classList.toggle('light', !st.settings.dark_mode);
+  document.body.classList.toggle('maximized', Boolean(st.window_maximized));
   const acc = st.settings.accent_color || '#22c55e';
   document.documentElement.style.setProperty('--accent', acc);
 
+  const maxIcon = st.window_maximized
+    ? '<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="1.5" y="3.5" width="7" height="7"/><path d="M3.5 3.5V1.5h7v7h-2"/></svg>'
+    : '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="0.8" y="0.8" width="8.4" height="8.4"/></svg>';
+
   const tabsBar = document.getElementById('tabsBar');
-  tabsBar.innerHTML = `<div class="brand-dot" style="background:transparent;box-shadow:none" title="VN Browser"><svg width="22" height="22" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="#0ea5e9"/><path d="M32 3A29 29 0 0 1 58 19H32Z" fill="#10b981"/><path d="M32 3A29 29 0 0 0 6 46L22 32Z" fill="#2563eb"/><circle cx="32" cy="32" r="15" fill="#fff"/><circle cx="32" cy="32" r="11.5" fill="#0ea5e9"/><path d="M21 32h22M32 21v22" stroke="#fff" stroke-width="2.5"/></svg></div>` + st.tabs.map(t => `
+  tabsBar.innerHTML = `<div class="brand-dot" style="background:transparent;box-shadow:none;margin-right:2px" title="VN Surf"><svg width="21" height="21" viewBox="0 0 64 64"><circle cx="32" cy="32" r="29" fill="#0ea5e9"/><path d="M32 3A29 29 0 0 1 58 19H32Z" fill="#10b981"/><path d="M32 3A29 29 0 0 0 6 46L22 32Z" fill="#2563eb"/><circle cx="32" cy="32" r="15" fill="#fff"/><circle cx="32" cy="32" r="11.5" fill="#0ea5e9"/><path d="M21 32h22M32 21v22" stroke="#fff" stroke-width="2.5"/></svg></div>`
+    + `<div class="tabs-scroll">` + st.tabs.map(t => `
     <div class="tab ${t.id === st.active_tab_id ? 'active' : ''} ${t.pinned ? 'pinned' : ''} ${t.incognito ? 'incognito' : ''}"
          draggable="true"
          ondragstart="DRAG_TAB_ID=${t.id}"
@@ -752,8 +835,14 @@ window.__vnUpdateState = function(st) {
       ${t.url !== 'vn://newtab' ? `<span class="tab-close" title="${t.muted ? 'Bật tiếng tab' : 'Tắt tiếng tab'}" onclick="event.stopPropagation(); send({type:'toggle_mute', id:${t.id}})">${t.muted ? '🔇' : '🔊'}</span>` : ''}
       ${!t.pinned ? `<span class="tab-close" onclick="event.stopPropagation(); send({type:'close_tab', id:${t.id}})">×</span>` : ''}
     </div>
-  `).join('') + `<button class="icon-btn" title="Tab mới (Ctrl+T)" onclick="send({type:'new_tab',incognito:false})">＋</button>`
-    + `<button class="icon-btn" title="Mở lại tab vừa đóng (Ctrl+Shift+T)" onclick="send({type:'reopen_tab'})">↺</button>`;
+  `).join('') + `<button class="icon-btn" style="width:28px;height:28px;margin-bottom:3px" title="Tab mới (Ctrl+T)" onclick="send({type:'new_tab',incognito:false})">＋</button>`
+    + `<button class="icon-btn" style="width:28px;height:28px;margin-bottom:3px" title="Mở lại tab vừa đóng (Ctrl+Shift+T)" onclick="send({type:'reopen_tab'})">↺</button></div>`
+    + `<div class="tabbar-drag"></div>`
+    + `<div class="win-controls">`
+    + `<button class="win-btn" title="Thu nhỏ" onclick="send({type:'win_minimize'})"><svg width="10" height="10" viewBox="0 0 10 10"><line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="1.2"/></svg></button>`
+    + `<button class="win-btn" title="${st.window_maximized ? 'Khôi phục kích thước' : 'Phóng to'}" onclick="send({type:'win_maximize'})">${maxIcon}</button>`
+    + `<button class="win-btn win-close" title="Đóng cửa sổ" onclick="send({type:'win_close'})"><svg width="10" height="10" viewBox="0 0 10 10"><path d="M0.8 0.8L9.2 9.2M9.2 0.8L0.8 9.2" stroke="currentColor" stroke-width="1.3"/></svg></button>`
+    + `</div>`;
 
   const active = st.tabs.find(t => t.id === st.active_tab_id);
   if (active && document.activeElement !== urlInput) {
@@ -767,75 +856,6 @@ window.__vnUpdateState = function(st) {
   document.getElementById('reloadBtn').innerHTML = (active && active.loading)
     ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>'
     : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
-  const zoomPct = Math.round((active ? active.zoom : 1.0) * 100);
-  let MENU_MODE = 'main';
-function openTranslatePicker() {
-  MENU_MODE = 'translate';
-  if (STATE) window.__vnUpdateState(STATE);
-}
-const menuWrap = document.getElementById('menuWrap');
-  const menuBox = document.getElementById('menuBox');
-  if (!st.menu_open) MENU_MODE = 'main';
-  menuWrap.classList.toggle('open', Boolean(st.menu_open));
-  if (st.menu_open && MENU_MODE === 'translate') {
-    menuBox.innerHTML = `
-      <div style="padding:10px 12px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <b>🌐 Dịch trang web</b>
-          <button class="btn soft" style="padding:3px 10px;font-size:12px" onclick="MENU_MODE='main';send({type:'toggle_menu'})">✕</button>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px">
-          <button class="btn" style="flex:1;padding:7px" onclick="MENU_MODE='main';send({type:'translate_page',lang:'vi'})">🇻🇳 Tiếng Việt</button>
-          <button class="btn soft" style="flex:1;padding:7px" onclick="MENU_MODE='main';send({type:'translate_page',lang:'en'})">🇺🇸 English</button>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Hoặc chọn ngôn ngữ khác:</div>
-        <div style="display:flex;gap:6px">
-          <select id="trLangSel" style="flex:1">
-            <option value="vi">Tiếng Việt</option>
-            <option value="en">English (Anh)</option>
-            <option value="ja">日本語 (Nhật)</option>
-            <option value="ko">한국어 (Hàn)</option>
-            <option value="zh-CN">中文 (Trung giản thể)</option>
-            <option value="zh-TW">繁體中文 (Trung phồn thể)</option>
-            <option value="fr">Français (Pháp)</option>
-            <option value="de">Deutsch (Đức)</option>
-            <option value="es">Español (Tây Ban Nha)</option>
-            <option value="th">ไทย (Thái)</option>
-            <option value="ru">Русский (Nga)</option>
-          </select>
-          <button class="btn" style="padding:6px 12px" onclick="const l=document.getElementById('trLangSel').value;MENU_MODE='main';send({type:'translate_page',lang:l})">Dịch</button>
-        </div>
-      </div>
-    `;
-  } else if (st.menu_open) {
-    menuBox.innerHTML = `
-      <div class="menu-item" onclick="send({type:'new_tab',incognito:false})"><span>➕ Tab mới</span><span class="menu-k">Ctrl+T</span></div>
-      <div class="menu-item" onclick="send({type:'new_tab',incognito:true})"><span>🕶 Tab Ẩn danh</span><span class="menu-k">Ctrl+Shift+T</span></div>
-      <div class="menu-sep"></div>
-      <div class="menu-item" onclick="send({type:'toggle_panel',panel:'history'})"><span>🕒 Lịch sử</span><span class="menu-k">Ctrl+H</span></div>
-      <div class="menu-item" onclick="send({type:'toggle_panel',panel:'downloads'})"><span>⬇ Tải xuống</span><span class="menu-k">Ctrl+J</span></div>
-      <div class="menu-item" onclick="send({type:'toggle_panel',panel:'bookmarks'})"><span>★ Dấu trang</span><span class="menu-k">Ctrl+D</span></div>
-      <div class="menu-item" onclick="send({type:'toggle_panel',panel:'passwords'})"><span>🔑 Mật khẩu đã lưu</span></div>
-      <div class="menu-sep"></div>
-      <div class="menu-item" style="cursor:default">
-        <span>🔍 Thu phóng</span>
-        <span style="display:flex;gap:6px;align-items:center">
-          <button class="btn soft" style="padding:2px 8px" onclick="send({type:'zoom',delta:-0.1})">−</button>
-          <span style="min-width:38px;text-align:center;cursor:pointer" onclick="send({type:'zoom',delta:0})">${zoomPct}%</span>
-          <button class="btn soft" style="padding:2px 8px" onclick="send({type:'zoom',delta:0.1})">+</button>
-        </span>
-      </div>
-      <div class="menu-item" onclick="send({type:'toggle_find'})"><span>🔎 Tìm trong trang</span><span class="menu-k">Ctrl+F</span></div>
-      <div class="menu-item" onclick="send({type:'picture_in_picture'})"><span>📺 Tách video nổi (PiP)</span></div>
-      <div class="menu-item" onclick="send({type:'reader_mode'})"><span>📖 Chế độ đọc sách</span></div>
-      <div class="menu-item" onclick="openTranslatePicker()"><span>🌐 Dịch trang...</span></div>
-      <div class="menu-item" onclick="send({type:'print_page'})"><span>🖨 In / Lưu PDF</span><span class="menu-k">Ctrl+P</span></div>
-      <div class="menu-item" onclick="send({type:'toggle_fullscreen'})"><span>⛶ Toàn màn hình</span><span class="menu-k">F11</span></div>
-      <div class="menu-item" onclick="send({type:'devtools'})"><span>⚙️ Công cụ lập trình</span><span class="menu-k">F12</span></div>
-      <div class="menu-sep"></div>
-      <div class="menu-item" onclick="send({type:'toggle_panel',panel:'settings'})"><span>🎨 Cài đặt & Giao diện</span></div>
-    `;
-  }
   const loadBar = document.getElementById('loadBar');
   if (active && active.loading) {
     loadBar.className = 'load-bar loading';
@@ -1221,6 +1241,195 @@ function filterList(q, cls) {
   });
 }
 send({ type: 'ready' });
+</script>
+</body>
+</html>
+"##;
+
+pub const POPUP_HTML: &str = r##"<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --bg: #202124;
+    --bg2: #292a2d;
+    --bg3: #35363a;
+    --text: #f8fafc;
+    --muted: #9aa0a6;
+    --accent: #22c55e;
+    --accent-soft: rgba(34, 197, 94, 0.16);
+    --border: rgba(255, 255, 255, 0.16);
+  }
+  body.light {
+    --bg: #f1f5f9;
+    --bg2: #ffffff;
+    --bg3: #e2e8f0;
+    --text: #0f172a;
+    --muted: #64748b;
+    --accent-soft: rgba(22, 163, 74, 0.12);
+    --border: rgba(15, 23, 42, 0.14);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg2);
+    color: var(--text);
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .menu-box {
+    width: 100%;
+    height: 100%;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+  }
+  .menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7.5px 12px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  .menu-item:hover { background: var(--accent-soft); }
+  .menu-k { font-size: 11px; color: var(--muted); }
+  .menu-sep { height: 1px; background: var(--border); margin: 3px 8px; flex-shrink: 0; }
+  .btn {
+    border: none;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn.soft { background: var(--bg3); color: var(--text); font-weight: 500; }
+  select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+    outline: none;
+  }
+  .suggest-list {
+    width: 100%;
+    height: 100%;
+    padding: 6px;
+    overflow-y: auto;
+  }
+  .suggest-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .suggest-item:hover, .suggest-item.sel { background: var(--accent-soft); }
+  .suggest-kind { width: 20px; text-align: center; flex-shrink: 0; }
+  .suggest-label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .suggest-sub { color: var(--muted); font-size: 11.5px; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 42%; }
+</style>
+</head>
+<body>
+<div id="root" style="width:100%;height:100%"></div>
+<script>
+function send(msg) {
+  if (window.ipc) window.ipc.postMessage(JSON.stringify(msg));
+}
+function esc(s) {
+  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+let CUR_SUGGESTS = [];
+window.__vnRenderPopup = function(p) {
+  document.body.classList.toggle('light', !p.dark_mode);
+  document.documentElement.style.setProperty('--accent', p.accent || '#22c55e');
+  const root = document.getElementById('root');
+  if (p.mode === 'translate') {
+    root.innerHTML = `
+      <div style="padding:12px 14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <b>🌐 Dịch trang web</b>
+          <button class="btn soft" style="padding:3px 9px;font-size:12px" onclick="send({type:'dismiss_popups'})">✕</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn" style="flex:1" onclick="send({type:'translate_page',lang:'vi'})">🇻🇳 Tiếng Việt</button>
+          <button class="btn soft" style="flex:1" onclick="send({type:'translate_page',lang:'en'})">🇺🇸 English</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Hoặc chọn ngôn ngữ khác:</div>
+        <div style="display:flex;gap:6px">
+          <select id="trLangSel" style="flex:1">
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">English (Anh)</option>
+            <option value="ja">日本語 (Nhật)</option>
+            <option value="ko">한국어 (Hàn)</option>
+            <option value="zh-CN">中文 (Trung giản thể)</option>
+            <option value="zh-TW">繁體中文 (Trung phồn thể)</option>
+            <option value="fr">Français (Pháp)</option>
+            <option value="de">Deutsch (Đức)</option>
+            <option value="es">Español (Tây Ban Nha)</option>
+            <option value="th">ไทย (Thái)</option>
+            <option value="ru">Русский (Nga)</option>
+          </select>
+          <button class="btn" onclick="send({type:'translate_page',lang:document.getElementById('trLangSel').value})">Dịch</button>
+        </div>
+      </div>`;
+  } else if (p.mode === 'menu') {
+    root.innerHTML = `
+      <div class="menu-box">
+        <div class="menu-item" onclick="send({type:'new_tab',incognito:false})"><span>➕ Tab mới</span><span class="menu-k">Ctrl+T</span></div>
+        <div class="menu-item" onclick="send({type:'new_tab',incognito:true})"><span>🕶 Tab Ẩn danh</span><span class="menu-k">Ctrl+Shift+T</span></div>
+        <div class="menu-sep"></div>
+        <div class="menu-item" onclick="send({type:'toggle_panel',panel:'history'})"><span>🕒 Lịch sử</span><span class="menu-k">Ctrl+H</span></div>
+        <div class="menu-item" onclick="send({type:'toggle_panel',panel:'downloads'})"><span>⬇ Tải xuống</span><span class="menu-k">Ctrl+J</span></div>
+        <div class="menu-item" onclick="send({type:'toggle_panel',panel:'bookmarks'})"><span>★ Dấu trang</span><span class="menu-k">Ctrl+D</span></div>
+        <div class="menu-item" onclick="send({type:'toggle_panel',panel:'passwords'})"><span>🔑 Mật khẩu đã lưu</span></div>
+        <div class="menu-sep"></div>
+        <div class="menu-item" style="cursor:default">
+          <span>🔍 Thu phóng</span>
+          <span style="display:flex;gap:6px;align-items:center">
+            <button class="btn soft" style="padding:2px 8px" onclick="send({type:'zoom',delta:-0.1})">−</button>
+            <span style="min-width:38px;text-align:center;cursor:pointer" onclick="send({type:'zoom',delta:0})">${p.zoom_pct}%</span>
+            <button class="btn soft" style="padding:2px 8px" onclick="send({type:'zoom',delta:0.1})">+</button>
+          </span>
+        </div>
+        <div class="menu-item" onclick="send({type:'toggle_find'})"><span>🔎 Tìm trong trang</span><span class="menu-k">Ctrl+F</span></div>
+        <div class="menu-item" onclick="send({type:'picture_in_picture'})"><span>📺 Tách video nổi (PiP)</span></div>
+        <div class="menu-item" onclick="send({type:'reader_mode'})"><span>📖 Chế độ đọc sách</span></div>
+        <div class="menu-item" onclick="send({type:'open_translate_menu'})"><span>🌐 Dịch trang...</span></div>
+        <div class="menu-item" onclick="send({type:'print_page'})"><span>🖨 In / Lưu PDF</span><span class="menu-k">Ctrl+P</span></div>
+        <div class="menu-item" onclick="send({type:'toggle_fullscreen'})"><span>⛶ Toàn màn hình</span><span class="menu-k">F11</span></div>
+        <div class="menu-item" onclick="send({type:'devtools'})"><span>⚙️ Công cụ lập trình</span><span class="menu-k">F12</span></div>
+        <div class="menu-sep"></div>
+        <div class="menu-item" onclick="send({type:'toggle_panel',panel:'settings'})"><span>🎨 Cài đặt & Giao diện</span></div>
+      </div>`;
+  } else if (p.mode === 'suggest') {
+    CUR_SUGGESTS = p.suggests || [];
+    root.innerHTML = `<div class="suggest-list">` + CUR_SUGGESTS.map((s, i) => `
+      <div class="suggest-item ${i === p.sel_idx ? 'sel' : ''}" onmousedown="event.preventDefault(); const t=CUR_SUGGESTS[${i}]; if(t) send({type:'pick_suggest',target:t.url||t.label})">
+        <span class="suggest-kind">${s.kind === 'bookmark' ? '★' : (s.kind === 'history' ? '🕒' : '🔍')}</span>
+        <span class="suggest-label">${esc(s.label)}</span>
+        ${s.url && s.url !== s.label ? `<span class="suggest-sub">${esc(s.url)}</span>` : ''}
+      </div>
+    `).join('') + `</div>`;
+  }
+};
+window.__vnSelectIdx = function(idx) {
+  document.querySelectorAll('.suggest-item').forEach((el, i) => {
+    el.classList.toggle('sel', i === idx);
+  });
+};
 </script>
 </body>
 </html>

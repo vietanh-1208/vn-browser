@@ -1,26 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootFrame"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0B1120">
+    android:background="#202124">
 
     <!-- Main Browser Column -->
     <LinearLayout
+        android:id="@+id/mainColumn"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="#0B1120">
+        android:background="#202124">
 
-        <!-- Chrome-style Top Bar -->
+        <!-- Chrome-style Top Bar (height dynamically expanded by statusBar + displayCutout inset) -->
         <LinearLayout
             android:id="@+id/topBar"
             android:layout_width="match_parent"
-            android:layout_height="58dp"
+            android:layout_height="56dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingStart="10dp"
             android:paddingEnd="10dp"
-            android:background="#0B1120">
+            android:background="#202124">
 
             <ImageButton
                 android:id="@+id/btnHome"
@@ -39,7 +41,7 @@
                 android:layout_marginStart="6dp"
                 android:layout_marginEnd="6dp"
                 android:paddingStart="12dp"
-                android:paddingEnd="8dp"
+                android:paddingEnd="6dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:background="@drawable/bg_omnibox">
@@ -55,15 +57,32 @@
                     android:layout_width="0dp"
                     android:layout_height="match_parent"
                     android:layout_weight="1"
+                    android:paddingEnd="6dp"
                     android:background="@android:color/transparent"
                     android:textColor="#F8FAFC"
-                    android:textColorHint="#94A3B8"
+                    android:textColorHint="#9AA0A6"
                     android:hint="Tìm trên Google hoặc nhập URL"
-                    android:textSize="14sp"
+                    android:textSize="13.5sp"
                     android:singleLine="true"
+                    android:ellipsize="end"
                     android:selectAllOnFocus="true"
                     android:imeOptions="actionGo"
                     android:inputType="textUri" />
+
+                <TextView
+                    android:id="@+id/btnPip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="24dp"
+                    android:gravity="center"
+                    android:paddingStart="7dp"
+                    android:paddingEnd="7dp"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_pill_badge"
+                    android:textColor="#38BDF8"
+                    android:text="📺 PiP"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
 
                 <TextView
                     android:id="@+id/btnTranslate"
@@ -87,7 +106,7 @@
                     android:gravity="center"
                     android:paddingStart="8dp"
                     android:paddingEnd="8dp"
-                    android:layout_marginStart="6dp"
+                    android:layout_marginStart="4dp"
                     android:background="@drawable/bg_shield_pill"
                     android:textColor="#34D399"
                     android:text="🛡️ 0"
@@ -111,7 +130,7 @@
             android:layout_height="2.5dp"
             android:max="100"
             android:progressTint="#10B981"
-            android:progressBackgroundTint="#0B1120"
+            android:progressBackgroundTint="#202124"
             android:visibility="gone" />
 
         <!-- Main WebView Container + Suggestions Overlay -->
@@ -141,18 +160,19 @@
 
         <!-- Subtle Divider -->
         <View
+            android:id="@+id/bottomDivider"
             android:layout_width="match_parent"
             android:layout_height="1dp"
-            android:background="#1E293B" />
+            android:background="#3C4043" />
 
-        <!-- Chrome-style Bottom Navigation Bar -->
+        <!-- Chrome-style Bottom Navigation Bar (height dynamically expanded by navigationBars inset) -->
         <LinearLayout
             android:id="@+id/bottomBar"
             android:layout_width="match_parent"
             android:layout_height="54dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:background="#0F172A">
+            android:background="#292A2D">
 
             <ImageButton
                 android:id="@+id/btnBack"
@@ -222,19 +242,20 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:background="#090E1A"
+        android:background="#18191C"
         android:visibility="gone"
         android:clickable="true"
         android:focusable="true">
 
         <LinearLayout
+            android:id="@+id/tabSwitcherHeader"
             android:layout_width="match_parent"
             android:layout_height="58dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
             android:paddingStart="14dp"
             android:paddingEnd="10dp"
-            android:background="#0F172A">
+            android:background="#202124">
 
             <TextView
                 android:id="@+id/tabSwitcherTitle"

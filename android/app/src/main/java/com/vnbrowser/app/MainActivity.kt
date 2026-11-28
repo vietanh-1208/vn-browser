@@ -1,13 +1,21 @@
 package com.vnbrowser.app
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.app.PictureInPictureParams
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
@@ -15,9 +23,11 @@ import android.os.Looper
 import android.os.Message
 import android.text.Editable
 import android.text.TextWatcher
+import android.util.Rational
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
@@ -26,7 +36,12 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import org.json.JSONArray
@@ -36,13 +51,25 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
+class BgPlayWebView(context: Context) : WebView(context) {
+    var allowBgAudio: Boolean = true
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        if (allowBgAudio && visibility != View.VISIBLE) {
+            super.onWindowVisibilityChanged(View.VISIBLE)
+        } else {
+            super.onWindowVisibilityChanged(visibility)
+        }
+    }
+}
+
 data class BrowserTab(
     val id: Long,
     var title: String,
     var url: String,
     val incognito: Boolean,
     var blockedCount: Int = 0,
-    val webView: WebView
+    var hasVideo: Boolean = false,
+    val webView: BgPlayWebView
 )
 
 class MainActivity : AppCompatActivity() {
@@ -50,20 +77,60 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val NEWTAB_URL = "https://vn.newtab/"
         private const val HISTORY_URL = "https://vn.history/"
-        private const val BOOKMARKS_URL = "https://vn.bookmarks/"
         private const val DOWNLOADS_URL = "https://vn.downloads/"
         private const val PASSWORDS_URL = "https://vn.passwords/"
         private const val SETTINGS_URL = "https://vn.settings/"
+
+        private const val ANDROID_BG_MEDIA_SCRIPT = """
+            (function() {
+              if (window.__vnBgMediaHooked) return;
+              window.__vnBgMediaHooked = true;
+              try {
+                Object.defineProperty(Document.prototype, 'hidden', { get: () => false, configurable: true });
+                Object.defineProperty(Document.prototype, 'webkitHidden', { get: () => false, configurable: true });
+                Object.defineProperty(Document.prototype, 'visibilityState', { get: () => 'visible', configurable: true });
+                Object.defineProperty(Document.prototype, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+              } catch (e) {}
+
+              const blockVis = (orig) => function(type, listener, opts) {
+                if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
+                  if (window.__vnAllowBgPlay !== false) return;
+                }
+                return orig.call(this, type, listener, opts);
+              };
+              try {
+                Document.prototype.addEventListener = blockVis(Document.prototype.addEventListener);
+                Window.prototype.addEventListener = blockVis(Window.prototype.addEventListener);
+              } catch (e) {}
+
+              setInterval(() => {
+                try {
+                  if (location.hostname.endsWith('youtube.com')) {
+                    window._lact = Date.now();
+                  }
+                  const hasV = Boolean(document.querySelector('video'));
+                  if (window.__vnLastHasV !== hasV && window.VNBridge && window.VNBridge.onVideoDetected) {
+                    window.__vnLastHasV = hasV;
+                    window.VNBridge.onVideoDetected(hasV);
+                  }
+                } catch (e) {}
+              }, 1200);
+            })();
+        """
     }
 
+    private lateinit var rootFrame: FrameLayout
+    private lateinit var mainColumn: LinearLayout
     private lateinit var urlInput: EditText
     private lateinit var topBar: LinearLayout
+    private lateinit var bottomDivider: View
     private lateinit var bottomBar: LinearLayout
     private lateinit var omniboxPill: LinearLayout
     private lateinit var btnHome: ImageButton
     private lateinit var btnReload: ImageButton
     private lateinit var btnNewTab: ImageButton
     private lateinit var btnMenu: ImageButton
+    private lateinit var btnPip: TextView
     private lateinit var btnTranslate: TextView
     private lateinit var adBadge: TextView
     private lateinit var btnTabs: TextView
@@ -73,6 +140,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webContainer: FrameLayout
     private lateinit var suggestList: ListView
     private lateinit var tabSwitcherOverlay: LinearLayout
+    private lateinit var tabSwitcherHeader: LinearLayout
     private lateinit var tabSwitcherTitle: TextView
     private lateinit var tabGrid: GridView
     private lateinit var tabGridAdapter: BaseAdapter
@@ -87,32 +155,74 @@ class MainActivity : AppCompatActivity() {
     private var activeTabIndex = 0
     private var nextTabId = 1L
     private var adblockEnabled = true
+    private var bgPlayEnabled = true
     private var darkMode = true
     private var desktopMode = false
     private var searchEngine = "Google"
     private var totalBlocked = 0
 
     private val historyItems = mutableListOf<Pair<String, String>>()
-    private val bookmarkItems = mutableListOf<Pair<String, String>>()
     private val downloadItems = mutableListOf<String>()
+    private var ytAdSkipperScript: String = ""
+
+    private val pauseMediaReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == MediaPlaybackService.ACTION_PAUSE_WEB) {
+                tabs.forEach { t ->
+                    t.webView.evaluateJavascript(
+                        "document.querySelectorAll('video,audio').forEach(m=>{try{m.pause();}catch(_){}});",
+                        null
+                    )
+                }
+            }
+        }
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         setContentView(R.layout.activity_main)
 
+        ytAdSkipperScript = try {
+            assets.open("yt_ad_skipper.js").bufferedReader().use { it.readText() }
+        } catch (_: Exception) {
+            ""
+        }
         vault = PasswordVault(this)
         loadLocalLists()
+        rootFrame = findViewById(R.id.rootFrame)
+        mainColumn = findViewById(R.id.mainColumn)
         urlInput = findViewById(R.id.urlInput)
         topBar = findViewById(R.id.topBar)
+        bottomDivider = findViewById(R.id.bottomDivider)
         bottomBar = findViewById(R.id.bottomBar)
         omniboxPill = findViewById(R.id.omniboxPill)
         btnHome = findViewById(R.id.btnHome)
         btnReload = findViewById(R.id.btnReload)
         btnNewTab = findViewById(R.id.btnNewTab)
         btnMenu = findViewById(R.id.btnMenu)
+        btnPip = findViewById(R.id.btnPip)
         btnTranslate = findViewById(R.id.btnTranslate)
         adBadge = findViewById(R.id.adBadge)
+        btnPip.setOnClickListener { enterVideoPip() }
         btnTranslate.setOnClickListener { translateCurrentPage() }
+
+        val filter = IntentFilter(MediaPlaybackService.ACTION_PAUSE_WEB)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(pauseMediaReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        } else {
+            registerReceiver(pauseMediaReceiver, filter)
+        }
         btnTabs = findViewById(R.id.btnTabs)
         btnBack = findViewById(R.id.btnBack)
         btnForward = findViewById(R.id.btnForward)
@@ -120,8 +230,60 @@ class MainActivity : AppCompatActivity() {
         webContainer = findViewById(R.id.webContainer)
         suggestList = findViewById(R.id.suggestList)
         tabSwitcherOverlay = findViewById(R.id.tabSwitcherOverlay)
+        tabSwitcherHeader = findViewById(R.id.tabSwitcherHeader)
         tabSwitcherTitle = findViewById(R.id.tabSwitcherTitle)
         tabGrid = findViewById(R.id.tabGrid)
+
+        ViewCompat.setOnApplyWindowInsetsListener(rootFrame) { _, windowInsets ->
+            if (isInPictureInPictureMode) {
+                topBar.visibility = View.GONE
+                bottomDivider.visibility = View.GONE
+                bottomBar.visibility = View.GONE
+                mainColumn.setPadding(0, 0, 0, 0)
+                return@setOnApplyWindowInsetsListener windowInsets
+            }
+            topBar.visibility = View.VISIBLE
+            val bars = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            val ime = windowInsets.getInsets(WindowInsetsCompat.Type.ime())
+            val resStatusId = resources.getIdentifier("status_bar_height", "dimen", "android")
+            val fallbackTop = if (resStatusId > 0) resources.getDimensionPixelSize(resStatusId) else dp(28)
+            val topInset = maxOf(bars.top, fallbackTop)
+            val leftInset = bars.left
+            val rightInset = bars.right
+            val navBottom = bars.bottom
+            val imeOpen = ime.bottom > navBottom + dp(40)
+
+            topBar.layoutParams = topBar.layoutParams.apply {
+                height = dp(56) + topInset
+            }
+            topBar.setPadding(dp(10) + leftInset, topInset, dp(10) + rightInset, 0)
+
+            if (imeOpen) {
+                bottomDivider.visibility = View.GONE
+                bottomBar.visibility = View.GONE
+                mainColumn.setPadding(0, 0, 0, ime.bottom)
+            } else {
+                mainColumn.setPadding(0, 0, 0, 0)
+                bottomDivider.visibility = View.VISIBLE
+                bottomBar.visibility = View.VISIBLE
+                bottomBar.layoutParams = bottomBar.layoutParams.apply {
+                    height = dp(54) + navBottom
+                }
+                bottomBar.setPadding(leftInset, 0, rightInset, navBottom)
+            }
+
+            tabSwitcherHeader.layoutParams = tabSwitcherHeader.layoutParams.apply {
+                height = dp(58) + topInset
+            }
+            tabSwitcherHeader.setPadding(dp(14) + leftInset, topInset, dp(10) + rightInset, 0)
+            tabGrid.setPadding(dp(14) + leftInset, dp(14), dp(14) + rightInset, dp(14) + navBottom)
+
+            windowInsets
+        }
+        ViewCompat.requestApplyInsets(rootFrame)
+        applyNativeChromeTheme()
 
         tabGridAdapter = object : BaseAdapter() {
             override fun getCount(): Int = tabs.size
@@ -369,7 +531,7 @@ class MainActivity : AppCompatActivity() {
               *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
               body{background:$bg;color:$fg;min-height:100vh;padding:30px 18px 28px;background-image:radial-gradient(circle at 15% 5%,rgba(16,185,129,.18),transparent 42%),radial-gradient(circle at 85% 12%,rgba(56,189,248,.16),transparent 44%)}
               .hero{text-align:center;margin-bottom:22px}
-              .logo{font-size:36px;font-weight:900;letter-spacing:-.5px;background:linear-gradient(135deg,#10b981,#0ea5e9,#8b5cf6,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:6px}
+              .logo{display:inline-block;padding:0 4px;font-size:36px;font-weight:900;letter-spacing:-.5px;background:linear-gradient(135deg,#10b981,#0ea5e9,#8b5cf6,#ec4899);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:6px}
               .sub{font-size:12.5px;color:$subFg}
               .search{display:flex;align-items:center;gap:10px;background:$pill;border:1.5px solid rgba(56,189,248,.45);border-radius:999px;padding:10px 16px;box-shadow:0 8px 22px rgba(0,0,0,.12);margin-bottom:14px}
               .search input{flex:1;background:transparent;border:none;outline:none;color:$fg;font-size:15px}
@@ -392,8 +554,17 @@ class MainActivity : AppCompatActivity() {
               </div>
               <form class="search" onsubmit="event.preventDefault();const v=document.getElementById('q').value;if(v.trim())VNBridge.navigate(v);">
                 <span>🔍</span>
-                <input id="q" type="text" placeholder="Tìm trên Google hoặc nhập URL" autocomplete="off" />
+                <input id="q" type="text" placeholder="Tìm trên Google hoặc nhập URL" autocomplete="off" oninput="clearTimeout(window.__st);const val=this.value.trim();if(!val){document.getElementById('ntSug').style.display='none';return;}window.__st=setTimeout(()=>VNBridge.requestNewTabSuggest(val),160);" />
               </form>
+              <div id="ntSug" style="display:none;background:$card;border:1px solid rgba(148,163,184,.25);border-radius:18px;padding:6px;margin:-6px 0 14px;box-shadow:0 10px 24px rgba(0,0,0,.2)"></div>
+              <script>
+                window.__vnNtSuggest = function(arr) {
+                  const box = document.getElementById('ntSug');
+                  if (!arr || !arr.length) { box.style.display = 'none'; return; }
+                  box.innerHTML = arr.map(s => '<div style="padding:10px 12px;border-radius:12px;font-size:14px;color:$fg" onclick="VNBridge.navigate(' + JSON.stringify(s) + ')">🔍 &nbsp;' + s.replace(/</g,'&lt;') + '</div>').join('');
+                  box.style.display = 'block';
+                };
+              </script>
               <div class="chips">
                 <button class="chip" onclick="VNBridge.openIncognito()">🕵️ Ẩn danh</button>
                 <button class="chip" onclick="VNBridge.openPasswords()">🔑 Mật khẩu</button>
@@ -425,7 +596,9 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun openNewTab(url: String, incognito: Boolean) {
         val tabId = nextTabId++
-        val wv = WebView(this)
+        val wv = BgPlayWebView(this).apply {
+            allowBgAudio = bgPlayEnabled
+        }
         wv.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = !incognito
@@ -444,13 +617,51 @@ class MainActivity : AppCompatActivity() {
         if (darkMode && WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
             WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, true)
         }
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            try {
+                WebViewCompat.addDocumentStartJavaScript(wv, ANDROID_BG_MEDIA_SCRIPT, setOf("*"))
+                if (ytAdSkipperScript.isNotEmpty()) {
+                    WebViewCompat.addDocumentStartJavaScript(
+                        wv,
+                        ytAdSkipperScript,
+                        setOf("https://*.youtube.com", "https://youtube.com", "http://*.youtube.com")
+                    )
+                }
+            } catch (_: Exception) {}
+        }
 
-        val tab = BrowserTab(tabId, if (incognito) "Tab ẩn danh" else "Tab mới", url, incognito, 0, wv)
+        val tab = BrowserTab(tabId, if (incognito) "Tab ẩn danh" else "Tab mới", url, incognito, 0, false, wv)
 
         wv.addJavascriptInterface(object {
             @JavascriptInterface
             fun navigate(raw: String) {
                 runOnUiThread { navigateCurrent(raw) }
+            }
+
+            @JavascriptInterface
+            fun requestNewTabSuggest(query: String) {
+                val q = query.trim()
+                if (q.isEmpty()) return
+                Thread {
+                    try {
+                        val url = URL("https://suggestqueries.google.com/complete/search?client=firefox&q=" + URLEncoder.encode(q, "UTF-8"))
+                        val conn = url.openConnection() as HttpURLConnection
+                        conn.connectTimeout = 2500
+                        conn.readTimeout = 2500
+                        conn.setRequestProperty("User-Agent", "VNSurf/1.1")
+                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        conn.disconnect()
+                        val arr = JSONArray(body).optJSONArray(1) ?: JSONArray()
+                        val out = JSONArray()
+                        for (i in 0 until minOf(arr.length(), 6)) {
+                            val item = arr.optString(i)
+                            if (item.isNotBlank()) out.put(item)
+                        }
+                        mainHandler.post {
+                            currentTab()?.webView?.evaluateJavascript("window.__vnNtSuggest && window.__vnNtSuggest($out);", null)
+                        }
+                    } catch (_: Exception) {}
+                }.start()
             }
 
             @JavascriptInterface
@@ -494,19 +705,36 @@ class MainActivity : AppCompatActivity() {
             }
 
             @JavascriptInterface
-            fun deleteBookmark(url: String) {
+            fun onAdSkipped() {
                 runOnUiThread {
-                    bookmarkItems.removeAll { it.second == url }
-                    saveLocalLists()
-                    currentTab()?.let { if (it.url == BOOKMARKS_URL) renderInternalTab(it) }
+                    tab.blockedCount++
+                    totalBlocked++
+                    updateChromeUi()
                 }
+            }
+
+            @JavascriptInterface
+            fun onVideoDetected(hasVideo: Boolean) {
+                runOnUiThread {
+                    tab.hasVideo = hasVideo
+                    updateChromeUi()
+                }
+            }
+
+            @JavascriptInterface
+            fun enterPip() {
+                runOnUiThread { enterVideoPip() }
             }
 
             @JavascriptInterface
             fun toggleSetting(key: String) {
                 runOnUiThread {
                     when (key) {
-                        "adblock" -> { adblockEnabled = !adblockEnabled; updateChromeUi() }
+                        "adblock" -> {
+                            adblockEnabled = !adblockEnabled
+                            syncYouTubeAdblockAttr()
+                            updateChromeUi()
+                        }
                         "dark" -> {
                             darkMode = !darkMode
                             tabs.forEach { applyDarkModeToTab(it) }
@@ -584,6 +812,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
                 if (!pageUrl.isNullOrBlank() && pageUrl != "about:blank") tab.url = pageUrl
+                tab.hasVideo = tab.url.contains("youtube.com") || tab.url.contains("youtu.be")
                 progressBar.visibility = View.VISIBLE
                 updateChromeUi()
             }
@@ -592,6 +821,11 @@ class MainActivity : AppCompatActivity() {
                 progressBar.visibility = View.GONE
                 if (!pageUrl.isNullOrBlank() && pageUrl != "about:blank") tab.url = pageUrl
                 if (!tab.url.startsWith("https://vn.")) {
+                    view?.evaluateJavascript(
+                        "window.__vnAllowBgPlay=${bgPlayEnabled};",
+                        null
+                    )
+                    view?.evaluateJavascript(ANDROID_BG_MEDIA_SCRIPT, null)
                     if (!tab.incognito && tab.url.startsWith("http")) {
                         val t = tab.title.ifBlank { tab.url }
                         historyItems.removeAll { it.second == tab.url }
@@ -619,31 +853,15 @@ class MainActivity : AppCompatActivity() {
                         null
                     )
                     applyDarkModeToTab(tab)
-                    if (adblockEnabled && tab.url.contains("youtube.com")) {
+                    if (tab.url.contains("youtube.com")) {
+                        val off = (!adblockEnabled).toString()
                         view?.evaluateJavascript(
-                            """
-                            (() => {
-                              if (window.__vnYtAd) return;
-                              window.__vnYtAd = true;
-                              if (!document.getElementById('__vnYtCss')) {
-                                const s = document.createElement('style');
-                                s.id = '__vnYtCss';
-                                s.textContent = '.ytp-ad-module,.ytp-ad-overlay-container,ytm-promoted-sparkles-web-renderer,ytd-ad-slot-renderer,#player-ads{display:none!important}';
-                                (document.head || document.documentElement).appendChild(s);
-                              }
-                              setInterval(() => {
-                                const sk = document.querySelector('.ytp-ad-skip-button,.ytp-skip-ad-button,.ytp-ad-skip-button-modern');
-                                if (sk) sk.click();
-                                const v = document.querySelector('.ad-showing video');
-                                if (v && isFinite(v.duration) && v.duration > 0 && v.currentTime < v.duration - 0.1) {
-                                  v.muted = true;
-                                  v.currentTime = v.duration;
-                                }
-                              }, 300);
-                            })();
-                            """.trimIndent(),
+                            "if(document.documentElement){document.documentElement.setAttribute('data-yt-adblock-disabled','$off');document.documentElement.setAttribute('data-yt-banners-disabled','$off');}",
                             null
                         )
+                        if (ytAdSkipperScript.isNotEmpty()) {
+                            view?.evaluateJavascript(ytAdSkipperScript, null)
+                        }
                     }
                 }
                 updateChromeUi()
@@ -734,6 +952,8 @@ class MainActivity : AppCompatActivity() {
         }
         val canTranslate = tab.url.startsWith("http") && !tab.url.startsWith("https://vn.") && !tab.url.contains("translate.google.")
         btnTranslate.visibility = if (canTranslate) View.VISIBLE else View.GONE
+        val showPip = tab.hasVideo || tab.url.contains("youtube.com/watch") || tab.url.contains("youtu.be/") || tab.url.contains("youtube.com")
+        btnPip.visibility = if (showPip && !tab.url.startsWith("https://vn.")) View.VISIBLE else View.GONE
         adBadge.text = if (adblockEnabled) "🛡️ ${tab.blockedCount}" else "🛡️ Tắt"
         btnTabs.text = tabs.size.toString()
         btnBack.alpha = if (tab.webView.canGoBack()) 1.0f else 0.35f
@@ -764,10 +984,14 @@ class MainActivity : AppCompatActivity() {
     private fun applyNativeChromeTheme() {
         val barBg = if (darkMode) 0xFF202124.toInt() else 0xFFFFFFFF.toInt()
         val botBg = if (darkMode) 0xFF292A2D.toInt() else 0xFFF1F3F4.toInt()
+        val divCol = if (darkMode) 0xFF3C4043.toInt() else 0xFFDADCE0.toInt()
         val txtFg = if (darkMode) 0xFFF8FAFC.toInt() else 0xFF202124.toInt()
         val hintFg = if (darkMode) 0xFF9AA0A6.toInt() else 0xFF5F6368.toInt()
         val icoTint = if (darkMode) 0xFFE2E8F0.toInt() else 0xFF202124.toInt()
+        rootFrame.setBackgroundColor(barBg)
+        mainColumn.setBackgroundColor(barBg)
         topBar.setBackgroundColor(barBg)
+        bottomDivider.setBackgroundColor(divCol)
         bottomBar.setBackgroundColor(botBg)
         omniboxPill.setBackgroundResource(if (darkMode) R.drawable.bg_omnibox else R.drawable.bg_omnibox_light)
         btnTabs.setBackgroundResource(if (darkMode) R.drawable.bg_tab_count else R.drawable.bg_tab_count_light)
@@ -777,6 +1001,10 @@ class MainActivity : AppCompatActivity() {
         btnTabs.setTextColor(txtFg)
         listOf(btnHome, btnReload, btnBack, btnForward, btnNewTab, btnMenu).forEach {
             it.setColorFilter(icoTint)
+        }
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !darkMode
+            isAppearanceLightNavigationBars = !darkMode
         }
     }
 
@@ -873,13 +1101,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 "<div class='row' style='margin-bottom:14px'><h2>🕒 Lịch sử</h2><button class='btn danger' onclick='VNBridge.clearHistory()'>Xoá hết</button></div>$rows"
             }
-            BOOKMARKS_URL -> {
-                val rows = if (bookmarkItems.isEmpty()) "<div class='card'>Chưa có dấu trang nào. Bấm ☆ Lưu trang trong menu để thêm!</div>"
-                else bookmarkItems.joinToString("") { (t, u) ->
-                    "<div class='card row'><div style='flex:1;overflow:hidden' onclick='VNBridge.navigate(${JSONObject.quote(u)})'><b>★ ${escHtml(t)}</b><div class='sub'>${escHtml(u)}</div></div><button class='btn danger' onclick='VNBridge.deleteBookmark(${JSONObject.quote(u)})'>Xoá</button></div>"
-                }
-                "<h2>★ Dấu trang đã lưu</h2>$rows"
-            }
             DOWNLOADS_URL -> {
                 val rows = if (downloadItems.isEmpty()) "<div class='card'>Chưa có tệp tải xuống nào trong phiên này (tệp tải lưu ở thư mục Downloads của máy).</div>"
                 else downloadItems.joinToString("") { "<div class='card'><b>⬇ ${escHtml(it)}</b></div>" }
@@ -913,36 +1134,43 @@ class MainActivity : AppCompatActivity() {
                 <div class='card row'><div><b>Lịch sử duyệt web</b><div class='sub'>Đang lưu ${historyItems.size} trang</div></div><button class='btn danger' onclick='VNBridge.clearHistory()'>Xoá lịch sử</button></div>
                 <div class='card row'><div><b>Xoá Cookie, Cache & Đặt lại</b><div class='sub'>Giải phóng bộ nhớ và đăng xuất các trang web</div></div><button class='btn danger' onclick='VNBridge.clearCacheData()'>Xoá tất cả</button></div>
                 <div class='sec'>ℹ️ Giới thiệu VN Surf</div>
-                <div class='card'><b>VN Surf v1.1.0 (Android)</b><div class='sub'>Đã chặn tổng cộng $totalBlocked quảng cáo & tab nhảy tự động.</div></div>
+                <div class='card'><b>VN Surf v1.2.0 (Android)</b><div class='sub'>Tích hợp YouTube AdBlock Pro & Speed 0x–16x · Đã chặn $totalBlocked quảng cáo & tab nhảy.</div></div>
             """.trimIndent()
             else -> ""
         }
         return "$head$body</body></html>"
     }
 
+    private fun syncYouTubeAdblockAttr() {
+        val off = (!adblockEnabled).toString()
+        val js = "if(document.documentElement){document.documentElement.setAttribute('data-yt-adblock-disabled','$off');document.documentElement.setAttribute('data-yt-banners-disabled','$off');}"
+        tabs.forEach { t ->
+            if (t.url.contains("youtube.com")) {
+                t.webView.evaluateJavascript(js, null)
+            }
+        }
+    }
+
     private fun loadLocalLists() {
         val sp = getSharedPreferences("vn_surf_data", Context.MODE_PRIVATE)
         searchEngine = sp.getString("search_engine", "Google") ?: "Google"
+        bgPlayEnabled = sp.getBoolean("bg_play", true)
         val hArr = JSONArray(sp.getString("history", "[]") ?: "[]")
         for (i in 0 until hArr.length()) {
             val o = hArr.optJSONObject(i) ?: continue
             historyItems.add(o.optString("t") to o.optString("u"))
         }
-        val bArr = JSONArray(sp.getString("bookmarks", "[]") ?: "[]")
-        for (i in 0 until bArr.length()) {
-            val o = bArr.optJSONObject(i) ?: continue
-            bookmarkItems.add(o.optString("t") to o.optString("u"))
-        }
     }
 
     private fun saveLocalLists() {
         val sp = getSharedPreferences("vn_surf_data", Context.MODE_PRIVATE)
-        searchEngine = sp.getString("search_engine", "Google") ?: "Google"
         val hArr = JSONArray()
         historyItems.forEach { (t, u) -> hArr.put(JSONObject().apply { put("t", t); put("u", u) }) }
-        val bArr = JSONArray()
-        bookmarkItems.forEach { (t, u) -> bArr.put(JSONObject().apply { put("t", t); put("u", u) }) }
-        sp.edit().putString("history", hArr.toString()).putString("bookmarks", bArr.toString()).putString("search_engine", searchEngine).apply()
+        sp.edit()
+            .putString("history", hArr.toString())
+            .putString("search_engine", searchEngine)
+            .putBoolean("bg_play", bgPlayEnabled)
+            .apply()
     }
 
     private fun refreshTabSwitcher() {
@@ -960,6 +1188,14 @@ class MainActivity : AppCompatActivity() {
         val view = layoutInflater.inflate(R.layout.menu_bottom_sheet, null)
         sheet.setContentView(view)
         (view.parent as? View)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        val inner = (view as? ViewGroup)?.getChildAt(0)
+        if (inner != null) {
+            ViewCompat.setOnApplyWindowInsetsListener(view) { _, insets ->
+                val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+                inner.setPadding(dp(16), dp(10), dp(16), dp(20) + nav.bottom)
+                insets
+            }
+        }
 
         view.findViewById<View>(R.id.bsNewTab).setOnClickListener {
             sheet.dismiss()
@@ -968,19 +1204,6 @@ class MainActivity : AppCompatActivity() {
         view.findViewById<View>(R.id.bsIncognito).setOnClickListener {
             sheet.dismiss()
             openNewTab(NEWTAB_URL, true)
-        }
-        view.findViewById<View>(R.id.bsBookmarkAdd).setOnClickListener {
-            sheet.dismiss()
-            val tab = currentTab()
-            if (tab != null && tab.url.startsWith("http") && !tab.url.startsWith("https://vn.")) {
-                if (bookmarkItems.none { it.second == tab.url }) {
-                    bookmarkItems.add(0, tab.title.ifBlank { tab.url } to tab.url)
-                    saveLocalLists()
-                    Toast.makeText(this, "★ Đã lưu dấu trang!", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(this, "Trang này đã có trong Dấu trang", Toast.LENGTH_SHORT).show()
-                }
-            }
         }
         view.findViewById<View>(R.id.bsTranslate).setOnClickListener {
             sheet.dismiss()
@@ -1003,13 +1226,30 @@ class MainActivity : AppCompatActivity() {
             sheet.dismiss()
             openInternalTab(DOWNLOADS_URL, "⬇ Tải xuống")
         }
-        view.findViewById<View>(R.id.bsBookmarks).setOnClickListener {
-            sheet.dismiss()
-            openInternalTab(BOOKMARKS_URL, "★ Dấu trang")
-        }
         view.findViewById<View>(R.id.bsFind).setOnClickListener {
             sheet.dismiss()
             currentTab()?.webView?.showFindDialog("", true)
+        }
+        view.findViewById<View>(R.id.bsPip).setOnClickListener {
+            sheet.dismiss()
+            enterVideoPip()
+        }
+        val bgAudioRow = view.findViewById<TextView>(R.id.bsBgAudio)
+        bgAudioRow.text = if (bgPlayEnabled) "🎵  Phát nhạc nền khi tắt màn: Đang bật" else "🔇  Phát nhạc nền khi tắt màn: Tắt"
+        bgAudioRow.setTextColor(if (bgPlayEnabled) 0xFF34D399.toInt() else 0xFF94A3B8.toInt())
+        bgAudioRow.setOnClickListener {
+            sheet.dismiss()
+            bgPlayEnabled = !bgPlayEnabled
+            tabs.forEach { t ->
+                t.webView.allowBgAudio = bgPlayEnabled
+                t.webView.evaluateJavascript("window.__vnAllowBgPlay=${bgPlayEnabled};", null)
+            }
+            saveLocalLists()
+            Toast.makeText(
+                this,
+                if (bgPlayEnabled) "🎵 Đã bật phát nhạc nền kể cả khi tắt màn hình!" else "Đã tắt phát nhạc nền",
+                Toast.LENGTH_SHORT
+            ).show()
         }
         view.findViewById<View>(R.id.bsReader).setOnClickListener {
             sheet.dismiss()
@@ -1041,8 +1281,11 @@ class MainActivity : AppCompatActivity() {
         adRow.setOnClickListener {
             sheet.dismiss()
             adblockEnabled = !adblockEnabled
+            syncYouTubeAdblockAttr()
             updateChromeUi()
-            if (currentTab()?.url != NEWTAB_URL) currentTab()?.webView?.reload()
+            if (currentTab()?.url != NEWTAB_URL && currentTab()?.url?.contains("youtube.com") != true) {
+                currentTab()?.webView?.reload()
+            }
         }
         val darkRow = view.findViewById<TextView>(R.id.bsDark)
         darkRow.text = if (darkMode) "🌙  Nền tối trang web: Đang bật" else "☀️  Nền tối trang web: Đang tắt"
@@ -1154,6 +1397,143 @@ class MainActivity : AppCompatActivity() {
             """.trimIndent(),
             null
         )
+    }
+
+    private fun enterVideoPip() {
+        val tab = currentTab() ?: return
+        if (tab.url.startsWith("https://vn.")) {
+            Toast.makeText(this, "Hãy mở YouTube hoặc trang có video để bật PiP!", Toast.LENGTH_SHORT).show()
+            return
+        }
+        tab.webView.evaluateJavascript(
+            """
+            (() => {
+              const v = document.querySelector('#movie_player video.html5-main-video') || document.querySelector('video');
+              if (!v) return 'NO_VIDEO';
+              if (!document.getElementById('__vnPipStyle')) {
+                const st = document.createElement('style');
+                st.id = '__vnPipStyle';
+                st.textContent = `
+                  html, body { overflow: hidden !important; background: #000 !important; }
+                  video {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    top: 0 !important;
+                    left: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    object-fit: contain !important;
+                    background: #000 !important;
+                    z-index: 2147483646 !important;
+                    transform: none !important;
+                  }
+                  #masthead-container, ytm-mobile-topbar-renderer, .mobile-topbar-header,
+                  #player-control-overlay, .ytp-chrome-top, .ytp-chrome-bottom,
+                  #yt-topright-speedbar, #yt-speed-panel {
+                    display: none !important;
+                  }
+                `;
+                (document.head || document.documentElement).appendChild(st);
+              }
+              try { if (v.paused) v.play(); } catch (_) {}
+              return 'OK';
+            })();
+            """.trimIndent()
+        ) { res ->
+            if (res?.contains("NO_VIDEO") == true) {
+                Toast.makeText(this, "Không tìm thấy video đang mở trên trang này!", Toast.LENGTH_SHORT).show()
+                return@evaluateJavascript
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                try {
+                    suggestList.visibility = View.GONE
+                    tabSwitcherOverlay.visibility = View.GONE
+                    topBar.visibility = View.GONE
+                    bottomDivider.visibility = View.GONE
+                    bottomBar.visibility = View.GONE
+                    mainColumn.setPadding(0, 0, 0, 0)
+                    val params = PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .build()
+                    enterPictureInPictureMode(params)
+                } catch (_: Exception) {
+                    restoreFromPipUi()
+                    Toast.makeText(this, "Thiết bị không cho phép mở cửa sổ nổi PiP", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun restoreFromPipUi() {
+        topBar.visibility = View.VISIBLE
+        bottomDivider.visibility = View.VISIBLE
+        bottomBar.visibility = View.VISIBLE
+        ViewCompat.requestApplyInsets(rootFrame)
+        tabs.forEach { t ->
+            t.webView.evaluateJavascript("document.getElementById('__vnPipStyle')?.remove();", null)
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            topBar.visibility = View.GONE
+            bottomDivider.visibility = View.GONE
+            bottomBar.visibility = View.GONE
+            suggestList.visibility = View.GONE
+            tabSwitcherOverlay.visibility = View.GONE
+            mainColumn.setPadding(0, 0, 0, 0)
+        } else {
+            restoreFromPipUi()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        try {
+            stopService(Intent(this, MediaPlaybackService::class.java))
+        } catch (_: Exception) {}
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (bgPlayEnabled && !isInPictureInPictureMode && !isFinishing) {
+            val mediaTab = tabs.firstOrNull {
+                it.hasVideo || it.url.contains("youtube.com") || it.url.contains("soundcloud.com") || it.url.contains("zingmp3.vn")
+            }
+            if (mediaTab != null) {
+                try {
+                    val svc = Intent(this, MediaPlaybackService::class.java).apply {
+                        action = MediaPlaybackService.ACTION_START
+                        putExtra(MediaPlaybackService.EXTRA_TITLE, mediaTab.title.ifBlank { "VN Surf Nhạc Nền" })
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(svc)
+                    } else {
+                        startService(svc)
+                    }
+                    // Ensure YouTube / HTML5 media keeps playing right across lockscreen transition
+                    mainHandler.postDelayed({
+                        mediaTab.webView.evaluateJavascript(
+                            "(() => { const v = document.querySelector('video,audio'); if (v && v.paused && !v.ended && v.currentTime > 0) { try { v.play(); } catch(_) {} } })();",
+                            null
+                        )
+                    }, 350)
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        try {
+            unregisterReceiver(pauseMediaReceiver)
+        } catch (_: Exception) {}
+        try {
+            stopService(Intent(this, MediaPlaybackService::class.java))
+        } catch (_: Exception) {}
+        super.onDestroy()
     }
 
     @Deprecated("Deprecated in Java")

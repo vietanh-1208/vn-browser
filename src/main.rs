@@ -16,7 +16,7 @@ use storage::{
 };
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tao::window::{Fullscreen, Icon, WindowBuilder};
+use tao::window::{Fullscreen, Icon, ResizeDirection, WindowBuilder};
 use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{NewWindowResponse, PageLoadEvent, Rect, WebContext, WebView, WebViewBuilder};
 
@@ -55,7 +55,21 @@ enum OsAuthAction {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum IpcMsg {
     Ready,
-    Suggest { query: String },
+    Suggest {
+        query: String,
+        #[serde(default)]
+        ox: f64,
+        #[serde(default)]
+        ow: f64,
+    },
+    SelectSuggestIdx { idx: i32 },
+    PickSuggest { target: String },
+    DismissPopups,
+    DragWindow,
+    ResizeWindow { dir: String },
+    WinMinimize,
+    WinMaximize,
+    WinClose,
     NewTab { incognito: bool },
     SwitchTab { id: u64 },
     CloseTab { id: u64 },
@@ -152,6 +166,17 @@ struct UiState<'a> {
     credentials: Vec<CredentialView>,
     app_version: &'static str,
     update_status: UpdateStatus,
+    window_maximized: bool,
+}
+
+#[derive(Serialize)]
+struct PopupRenderState<'a> {
+    mode: &'a str,
+    dark_mode: bool,
+    accent: &'a str,
+    zoom_pct: u32,
+    suggests: &'a [Suggestion],
+    sel_idx: i32,
 }
 
 struct TabState {
@@ -180,8 +205,6 @@ struct ClosedTab {
 fn top_chrome_height(
     data: &BrowserData,
     find_open: bool,
-    menu_open: bool,
-    suggest_count: usize,
     overlay_open: bool,
     win_h: f64,
 ) -> f64 {
@@ -195,13 +218,46 @@ fn top_chrome_height(
     if find_open {
         h += 36.0;
     }
-    if menu_open {
-        h += 410.0;
-    } else if suggest_count > 0 {
-        h += ((suggest_count.min(7) as f64) * 38.0 + 24.0).min(290.0);
-    }
     h
 }
+
+#[cfg(target_os = "windows")]
+fn win32_child_hwnds(parent: isize) -> Vec<isize> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindow, GW_CHILD, GW_HWNDNEXT};
+    let mut out = Vec::new();
+    unsafe {
+        let mut cur = GetWindow(parent as _, GW_CHILD);
+        while !cur.is_null() {
+            out.push(cur as isize);
+            cur = GetWindow(cur, GW_HWNDNEXT);
+        }
+    }
+    out
+}
+
+#[cfg(target_os = "windows")]
+fn bring_hwnd_to_top(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    unsafe {
+        SetWindowPos(
+            hwnd as _,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn bring_hwnd_to_top(_hwnd: isize) {}
 
 const TAB_SHORTCUTS_SCRIPT: &str = r#"
 (() => {
@@ -226,6 +282,7 @@ const TAB_SHORTCUTS_SCRIPT: &str = r#"
     else if (e.ctrlKey && e.key === '0') { e.preventDefault(); send({ type: 'zoom', delta: 0 }); }
     else if (e.ctrlKey && e.key === 'Tab') { e.preventDefault(); send({ type: 'next_tab' }); }
   }, true);
+  window.addEventListener('mousedown', () => { if (window.ipc) window.ipc.postMessage(JSON.stringify({ type: 'dismiss_popups' })); }, true);
   document.addEventListener('submit', (e) => {
     const form = e.target;
     if (!form || !form.querySelector) return;
@@ -271,10 +328,18 @@ fn create_tab_webview(
     let cur_url_nav = Arc::new(Mutex::new(url.to_string()));
     let cur_url_nw = Arc::clone(&cur_url_nav);
 
+    let ab_init_enabled = shared_adblock.lock().map(|g| g.0).unwrap_or(true);
+    let yt_state_script = format!(
+        "(() => {{ const off = '{}'; const apply = () => {{ if (document.documentElement) {{ document.documentElement.setAttribute('data-yt-adblock-disabled', off); document.documentElement.setAttribute('data-yt-banners-disabled', off); }} }}; apply(); document.addEventListener('DOMContentLoaded', apply, {{ once: true }}); }})();",
+        if ab_init_enabled { "false" } else { "true" }
+    );
+
     let builder = WebViewBuilder::new_with_web_context(ctx)
         .with_bounds(bounds)
         .with_visible(false)
         .with_incognito(incognito)
+        .with_initialization_script(&yt_state_script)
+        .with_initialization_script(adblock::YOUTUBE_AD_SKIPPER_SCRIPT)
         .with_initialization_script(adblock::ADBLOCK_COSMETIC_SCRIPT)
         .with_initialization_script(TAB_SHORTCUTS_SCRIPT)
         .with_ipc_handler(move |req| {
@@ -368,12 +433,17 @@ fn create_tab_webview(
 }
 
 fn push_state(
+    window: &tao::window::Window,
     chrome: &WebView,
+    popup: &WebView,
     tabs: &[TabState],
     active_tab_id: u64,
     active_panel: &Option<String>,
     find_open: bool,
     menu_open: bool,
+    menu_mode: &str,
+    cur_suggests: &[Suggestion],
+    sel_suggest_idx: i32,
     incognito_locked: bool,
     passwords_locked: bool,
     revealed_pw: &Option<(String, String)>,
@@ -406,6 +476,11 @@ fn push_state(
             }
         })
         .collect();
+    let zoom_pct = tabs
+        .iter()
+        .find(|t| t.id == active_tab_id)
+        .map(|t| (t.zoom * 100.0).round() as u32)
+        .unwrap_or(100);
     let update_status = update_state
         .lock()
         .map(|g| g.clone())
@@ -435,23 +510,50 @@ fn push_state(
             .collect(),
         app_version: APP_VERSION,
         update_status,
+        window_maximized: window.is_maximized(),
     };
     if let Ok(json) = serde_json::to_string(&st) {
         let script = format!("window.__vnUpdateState && window.__vnUpdateState({});", json);
         let _ = chrome.evaluate_script(&script);
+    }
+
+    if menu_open || !cur_suggests.is_empty() {
+        let pmode = if menu_open {
+            if menu_mode == "translate" { "translate" } else { "menu" }
+        } else {
+            "suggest"
+        };
+        let ps = PopupRenderState {
+            mode: pmode,
+            dark_mode: data.settings.dark_mode,
+            accent: &data.settings.accent_color,
+            zoom_pct,
+            suggests: cur_suggests,
+            sel_idx: sel_suggest_idx,
+        };
+        if let Ok(pjson) = serde_json::to_string(&ps) {
+            let _ = popup.evaluate_script(&format!(
+                "window.__vnRenderPopup && window.__vnRenderPopup({});",
+                pjson
+            ));
+        }
     }
 }
 
 fn layout_views(
     window: &tao::window::Window,
     chrome: &WebView,
+    popup: &WebView,
+    popup_hwnd: isize,
     tabs: &mut [TabState],
     active_tab_id: u64,
     active_panel: &Option<String>,
     find_open: bool,
     menu_open: bool,
+    menu_mode: &str,
     incognito_locked: bool,
     suggest_count: usize,
+    omnibox_box: (f64, f64),
     data: &BrowserData,
 ) {
     let scale = window.scale_factor();
@@ -464,7 +566,7 @@ fn layout_views(
     let active_is_locked_incog = incognito_locked && active_tab.map(|t| t.incognito).unwrap_or(false);
     let active_has_error = active_tab.map(|t| t.error_msg).unwrap_or(false);
     let overlay_open = active_panel.is_some() || active_is_newtab || active_is_locked_incog || active_has_error;
-    let top_h = top_chrome_height(data, find_open, menu_open, suggest_count, overlay_open, win_h);
+    let top_h = top_chrome_height(data, find_open, overlay_open, win_h);
 
     let _ = chrome.set_bounds(Rect {
         position: LogicalPosition::new(0.0, 0.0).into(),
@@ -482,6 +584,33 @@ fn layout_views(
             let _ = wv.set_bounds(content_rect);
             let _ = wv.set_visible(should_show);
         }
+    }
+
+    if menu_open {
+        let (pw, ph): (f64, f64) = if menu_mode == "translate" {
+            (296.0, 174.0)
+        } else {
+            (268.0, 418.0)
+        };
+        let px = (win_w - pw - 10.0).max(8.0);
+        let _ = popup.set_bounds(Rect {
+            position: LogicalPosition::new(px, 84.0).into(),
+            size: LogicalSize::new(pw, ph.min((win_h - 90.0).max(120.0))).into(),
+        });
+        let _ = popup.set_visible(true);
+        bring_hwnd_to_top(popup_hwnd);
+    } else if suggest_count > 0 {
+        let sx = omnibox_box.0.clamp(10.0, (win_w - 280.0).max(10.0));
+        let sw = omnibox_box.1.clamp(280.0, (win_w - sx - 10.0).max(280.0));
+        let sh = ((suggest_count.min(7) as f64) * 37.0 + 16.0).min(276.0);
+        let _ = popup.set_bounds(Rect {
+            position: LogicalPosition::new(sx, 82.0).into(),
+            size: LogicalSize::new(sw, sh).into(),
+        });
+        let _ = popup.set_visible(true);
+        bring_hwnd_to_top(popup_hwnd);
+    } else {
+        let _ = popup.set_visible(false);
     }
 }
 
@@ -723,6 +852,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut wb = WindowBuilder::new()
         .with_title("VN Surf")
+        .with_decorations(false)
         .with_visible(false)
         .with_inner_size(LogicalSize::new(
             data.settings.window_width.max(640.0),
@@ -758,6 +888,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .build_as_child(&window)?;
 
+    #[cfg(target_os = "windows")]
+    let win_hwnd: isize = {
+        use tao::platform::windows::WindowExtWindows;
+        window.hwnd() as isize
+    };
+    #[cfg(target_os = "windows")]
+    let children_before_popup = win32_child_hwnds(win_hwnd);
+
+    let popup_ipc_proxy = proxy.clone();
+    let popup = WebViewBuilder::new_with_web_context(&mut normal_ctx)
+        .with_background_color((41, 42, 45, 255))
+        .with_visible(false)
+        .with_html(ui_html::POPUP_HTML)
+        .with_bounds(Rect {
+            position: LogicalPosition::new(980.0, 84.0).into(),
+            size: LogicalSize::new(268.0, 418.0).into(),
+        })
+        .with_ipc_handler(move |req| {
+            let _ = popup_ipc_proxy.send_event(UserEvent::Ipc(req.body().to_string()));
+        })
+        .build_as_child(&window)?;
+
+    #[cfg(target_os = "windows")]
+    let popup_hwnd: isize = win32_child_hwnds(win_hwnd)
+        .into_iter()
+        .find(|h| !children_before_popup.contains(h))
+        .unwrap_or(0);
+    #[cfg(not(target_os = "windows"))]
+    let popup_hwnd: isize = 0;
+
     let mut next_tab_id: u64 = 1;
     let mut tabs: Vec<TabState> = Vec::new();
     let mut closed_tabs: VecDeque<ClosedTab> = VecDeque::new();
@@ -765,10 +925,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut active_panel: Option<String> = None;
     let mut find_open = false;
     let mut menu_open = false;
+    let mut menu_mode: String = "main".into();
     let mut incognito_locked = !data.settings.incognito_pin.is_empty();
     let mut passwords_locked = true;
     let mut revealed_pw: Option<(String, String)> = None;
-    let mut suggest_count: usize = 0;
+    let mut cur_suggests: Vec<Suggestion> = Vec::new();
+    let mut sel_suggest_idx: i32 = -1;
+    let mut omnibox_box: (f64, f64) = (140.0, 640.0);
     let mut suggest_seq: u64 = 0;
     let update_state = Arc::new(Mutex::new(UpdateStatus::Idle));
     let mut pending_save_cred: Option<(String, String, String)> = None;
@@ -852,7 +1015,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 if changed {
-                    push_state(&chrome, &tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
+                    push_state(&window, &chrome, &popup, &tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, &cur_suggests, sel_suggest_idx, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
                 }
             }
         }
@@ -890,7 +1053,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 event: WindowEvent::Resized(_),
                 ..
             } => {
-                layout_views(&window, &chrome, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, suggest_count, &data);
+                layout_views(&window, &chrome, &popup, popup_hwnd, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, incognito_locked, cur_suggests.len(), omnibox_box, &data);
+                push_state(&window, &chrome, &popup, &tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, &cur_suggests, sel_suggest_idx, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
             }
             Event::UserEvent(ue) => {
                 match ue {
@@ -1024,14 +1188,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if seq != suggest_seq {
                             return;
                         }
-                        suggest_count = items.len();
-                        if let Ok(json) = serde_json::to_string(&items) {
+                        cur_suggests = items;
+                        sel_suggest_idx = -1;
+                        if let Ok(json) = serde_json::to_string(&cur_suggests) {
                             let _ = chrome.evaluate_script(&format!(
                                 "window.__vnShowSuggestions && window.__vnShowSuggestions({});",
                                 json
                             ));
                         }
-                        layout_views(&window, &chrome, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, suggest_count, &data);
+                        layout_views(&window, &chrome, &popup, popup_hwnd, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, incognito_locked, cur_suggests.len(), omnibox_box, &data);
+                        push_state(&window, &chrome, &popup, &tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, &cur_suggests, sel_suggest_idx, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
                         return;
                     }
                     UserEvent::UpdateStateChanged => {}
@@ -1067,25 +1233,141 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     UserEvent::Ipc(raw) => {
                         let Ok(msg) = serde_json::from_str::<IpcMsg>(&raw) else { return };
-                        if !matches!(msg, IpcMsg::ToggleMenu | IpcMsg::Zoom { .. } | IpcMsg::AdBlockedJs | IpcMsg::Ready) {
+                        if !matches!(
+                            msg,
+                            IpcMsg::ToggleMenu
+                                | IpcMsg::OpenTranslateMenu
+                                | IpcMsg::Zoom { .. }
+                                | IpcMsg::AdBlockedJs
+                                | IpcMsg::Ready
+                        ) {
                             menu_open = false;
+                            menu_mode = "main".into();
                         }
                         match msg {
                             IpcMsg::Ready => {
                                 if !window_shown {
                                     window_shown = true;
-                                    layout_views(&window, &chrome, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, suggest_count, &data);
-                                    push_state(&chrome, &tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
+                                    layout_views(&window, &chrome, &popup, popup_hwnd, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, incognito_locked, cur_suggests.len(), omnibox_box, &data);
+                                    push_state(&window, &chrome, &popup, &tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, &cur_suggests, sel_suggest_idx, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
                                     window.set_visible(true);
                                 }
+                                return;
                             }
-                            IpcMsg::Suggest { query } => {
+                            IpcMsg::DismissPopups => {
+                                if !menu_open && cur_suggests.is_empty() {
+                                    return;
+                                }
+                                menu_open = false;
+                                menu_mode = "main".into();
+                                suggest_seq += 1;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
+                            }
+                            IpcMsg::DragWindow => {
+                                let _ = window.drag_window();
+                                return;
+                            }
+                            IpcMsg::ResizeWindow { dir } => {
+                                let rd = match dir.as_str() {
+                                    "nw" => ResizeDirection::NorthWest,
+                                    "ne" => ResizeDirection::NorthEast,
+                                    "w" => ResizeDirection::West,
+                                    "e" => ResizeDirection::East,
+                                    _ => ResizeDirection::North,
+                                };
+                                let _ = window.drag_resize_window(rd);
+                                return;
+                            }
+                            IpcMsg::WinMinimize => {
+                                window.set_minimized(true);
+                                return;
+                            }
+                            IpcMsg::WinMaximize => {
+                                window.set_maximized(!window.is_maximized());
+                            }
+                            IpcMsg::WinClose => {
+                                let maximized = window.is_maximized();
+                                data.settings.window_maximized = maximized;
+                                if !maximized {
+                                    let scale = window.scale_factor();
+                                    let sz = window.inner_size();
+                                    data.settings.window_width = (sz.width as f64 / scale).max(640.0);
+                                    data.settings.window_height = (sz.height as f64 / scale).max(480.0);
+                                    if let Ok(pos) = window.outer_position() {
+                                        data.settings.window_x = Some(pos.x);
+                                        data.settings.window_y = Some(pos.y);
+                                    }
+                                }
+                                data.last_session = tabs
+                                    .iter()
+                                    .filter(|t| !t.incognito)
+                                    .map(|t| SavedTab {
+                                        title: t.title.clone(),
+                                        url: t.url.clone(),
+                                        pinned: t.pinned,
+                                    })
+                                    .collect();
+                                data.save();
+                                *control_flow = ControlFlow::Exit;
+                                return;
+                            }
+                            IpcMsg::SelectSuggestIdx { idx } => {
+                                sel_suggest_idx = idx;
+                                let _ = popup.evaluate_script(&format!(
+                                    "window.__vnSelectIdx && window.__vnSelectIdx({});",
+                                    idx
+                                ));
+                                return;
+                            }
+                            IpcMsg::PickSuggest { target } => {
+                                suggest_seq += 1;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
+                                let resolved = resolve_address_input(&target, &data.settings.search_engine);
+                                let _ = chrome.evaluate_script(&format!(
+                                    "const u=document.getElementById('urlInput');if(u){{u.value={};u.blur();}}",
+                                    serde_json::to_string(&resolved).unwrap_or_default()
+                                ));
+                                if let Some(tab) = tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                                    tab.url = resolved.clone();
+                                    tab.sleeping = false;
+                                    tab.error_msg = false;
+                                    active_panel = None;
+                                    if resolved.starts_with("vn://") {
+                                        tab.webview = None;
+                                    } else if let Some(wv) = &tab.webview {
+                                        let _ = wv.load_url(&resolved);
+                                    } else {
+                                        let rect = Rect {
+                                            position: LogicalPosition::new(0.0, 112.0).into(),
+                                            size: LogicalSize::new(1280.0, 708.0).into(),
+                                        };
+                                        tab.webview = create_tab_webview(
+                                            tab.id,
+                                            &resolved,
+                                            tab.incognito,
+                                            rect,
+                                            &window,
+                                            &mut normal_ctx,
+                                            &mut incog_ctx,
+                                            proxy.clone(),
+                                            Arc::clone(&shared_adblock),
+                                        );
+                                    }
+                                }
+                            }
+                            IpcMsg::Suggest { query, ox, ow } => {
                                 suggest_seq += 1;
                                 let seq = suggest_seq;
+                                if ow > 80.0 {
+                                    omnibox_box = (ox, ow);
+                                }
                                 let q = query.trim().to_string();
                                 if q.is_empty() {
-                                    suggest_count = 0;
-                                    layout_views(&window, &chrome, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, suggest_count, &data);
+                                    cur_suggests.clear();
+                                    sel_suggest_idx = -1;
+                                    layout_views(&window, &chrome, &popup, popup_hwnd, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, incognito_locked, cur_suggests.len(), omnibox_box, &data);
                                     return;
                                 }
                                 let ql = q.to_lowercase();
@@ -1160,7 +1442,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             IpcMsg::NewTab { incognito } => {
                                 suggest_seq += 1;
-                                suggest_count = 0;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
                                 let id = next_tab_id;
                                 next_tab_id += 1;
                                 tabs.push(TabState {
@@ -1183,7 +1466,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             IpcMsg::SwitchTab { id } => {
                                 suggest_seq += 1;
-                                suggest_count = 0;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
                                 active_tab_id = id;
                                 active_panel = None;
                                 if let Some(t) = tabs.iter_mut().find(|t| t.id == id) {
@@ -1382,7 +1666,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             IpcMsg::Navigate { input } => {
                                 suggest_seq += 1;
-                                suggest_count = 0;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
                                 let target = resolve_address_input(&input, &data.settings.search_engine);
                                 active_panel = None;
                                 if let Some(t) = tabs.iter_mut().find(|t| t.id == active_tab_id) {
@@ -1478,7 +1763,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 data.save();
                             }
                             IpcMsg::TogglePanel { panel } => {
-                                suggest_count = 0;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
                                 menu_open = false;
                                 passwords_locked = true;
                                 revealed_pw = None;
@@ -1540,7 +1826,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                             IpcMsg::ToggleMenu => {
-                                menu_open = !menu_open;
+                                if menu_open && menu_mode == "translate" {
+                                    menu_open = false;
+                                    menu_mode = "main".into();
+                                } else {
+                                    menu_mode = "main".into();
+                                    menu_open = !menu_open;
+                                }
+                                if menu_open {
+                                    cur_suggests.clear();
+                                    sel_suggest_idx = -1;
+                                }
                             }
                             IpcMsg::AdBlockedJs => {
                                 if data.settings.adblock_enabled {
@@ -1677,6 +1973,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         if let Ok(mut ab) = shared_adblock.lock() {
                                             ab.0 = data.settings.adblock_enabled;
                                         }
+                                        let off = if data.settings.adblock_enabled { "false" } else { "true" };
+                                        let sync_js = format!(
+                                            "if (document.documentElement) {{ document.documentElement.setAttribute('data-yt-adblock-disabled', '{}'); document.documentElement.setAttribute('data-yt-banners-disabled', '{}'); }}",
+                                            off, off
+                                        );
+                                        for t in &tabs {
+                                            if let Some(wv) = &t.webview {
+                                                let _ = wv.evaluate_script(&sync_js);
+                                            }
+                                        }
                                     }
                                     "show_bookmarks_bar" => {
                                         data.settings.show_bookmarks_bar = value.as_bool().unwrap_or(true);
@@ -1803,11 +2109,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 });
                             }
                             IpcMsg::OpenTranslateMenu => {
-                                suggest_count = 0;
+                                cur_suggests.clear();
+                                sel_suggest_idx = -1;
+                                menu_mode = "translate".into();
                                 menu_open = true;
                             }
                             IpcMsg::TranslatePage { lang } => {
                                 menu_open = false;
+                                menu_mode = "main".into();
                                 let target_lang = if lang.trim().is_empty() { "vi" } else { lang.trim() };
                                 if let Some(tab) = tabs.iter_mut().find(|t| t.id == active_tab_id) {
                                     if tab.url.starts_with("http://") || tab.url.starts_with("https://") {
@@ -1834,8 +2143,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                layout_views(&window, &chrome, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, suggest_count, &data);
-                push_state(&chrome, &tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
+                layout_views(&window, &chrome, &popup, popup_hwnd, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, incognito_locked, cur_suggests.len(), omnibox_box, &data);
+                push_state(&window, &chrome, &popup, &tabs, active_tab_id, &active_panel, find_open, menu_open, &menu_mode, &cur_suggests, sel_suggest_idx, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
             }
             _ => {}
         }
