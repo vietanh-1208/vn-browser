@@ -6,8 +6,8 @@ using System.Reflection;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyTitle("VN Browser Setup")]
-[assembly: AssemblyProduct("VN Browser")]
+[assembly: AssemblyTitle("VN Surf Setup")]
+[assembly: AssemblyProduct("VN Surf")]
 [assembly: AssemblyVersion("1.1.0.0")]
 [assembly: AssemblyFileVersion("1.1.0.0")]
 
@@ -21,7 +21,7 @@ namespace VNBrowserSetup
 
         public InstallerForm()
         {
-            Text = "Cài đặt VN Browser v1.1.0";
+            Text = "Cài đặt VN Surf v1.1.0";
             Size = new Size(480, 240);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -31,7 +31,7 @@ namespace VNBrowserSetup
 
             var title = new Label
             {
-                Text = "VN Browser - Trình duyệt nhẹ & bảo mật",
+                Text = "VN Surf - Trình duyệt nhẹ, màu sắc & bảo mật",
                 Font = new Font("Segoe UI", 13, FontStyle.Bold),
                 Location = new Point(22, 20),
                 AutoSize = true,

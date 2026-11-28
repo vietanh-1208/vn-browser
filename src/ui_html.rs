@@ -4,14 +4,14 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
 <meta charset="UTF-8">
 <style>
   :root {
-    --bg: #0b1120;
-    --bg2: #151e32;
-    --bg3: #24314d;
+    --bg: #202124;
+    --bg2: #292a2d;
+    --bg3: #35363a;
     --text: #f8fafc;
-    --muted: #94a3b8;
+    --muted: #9aa0a6;
     --accent: #22c55e;
     --accent-soft: rgba(34, 197, 94, 0.16);
-    --border: rgba(148, 163, 184, 0.16);
+    --border: rgba(255, 255, 255, 0.12);
     --danger: #ef4444;
   }
   body.light {
@@ -36,9 +36,9 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
   }
   .tabs-bar {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px 4px 10px;
+    align-items: flex-end;
+    gap: 5px;
+    padding: 4px 10px 0 10px;
     height: 40px;
     background: var(--bg);
     overflow-x: auto;
@@ -47,6 +47,7 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
   .brand-dot {
     width: 24px;
     height: 24px;
+    margin-bottom: 6px;
     border-radius: 8px;
     background: linear-gradient(135deg, var(--accent), #0ea5e9);
     color: #fff;
@@ -61,27 +62,34 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
   .tab {
     display: flex;
     align-items: center;
-    gap: 7px;
-    height: 30px;
-    min-width: 115px;
-    max-width: 210px;
-    padding: 0 10px;
+    gap: 8px;
+    height: 32px;
+    margin-bottom: 2px;
+    min-width: 120px;
+    max-width: 220px;
+    padding: 0 12px;
     border-radius: 10px;
     background: transparent;
     color: var(--muted);
     font-size: 12.5px;
+    font-weight: 500;
     cursor: pointer;
     border: 1px solid transparent;
-    flex: 1 1 150px;
-    transition: background 0.15s, border-color 0.15s;
+    flex: 1 1 160px;
+    transition: background 0.15s, color 0.15s;
   }
   .tab.pinned { flex: 0 0 auto; min-width: 44px; max-width: 115px; }
   .tab:hover { background: var(--bg3); color: var(--text); }
   .tab.active {
+    height: 34px;
+    margin-bottom: 0;
+    border-radius: 11px 11px 0 0;
     background: var(--bg2);
     color: var(--text);
+    font-weight: 600;
     border-color: var(--border);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    border-bottom-color: transparent;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.15);
   }
   .tab.incognito.active { background: #2e1065; color: #f5f3ff; border-color: rgba(192,132,252,0.35); }
   .tab-title {
@@ -116,9 +124,9 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
     border: none;
     background: transparent;
     color: var(--text);
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -282,8 +290,8 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
     width: min(680px, 92%);
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 6px;
+    border-radius: 18px;
+    padding: 8px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
     max-height: 270px;
     overflow-y: auto;
@@ -306,7 +314,11 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
     flex: 1;
     overflow-y: auto;
     padding: 28px;
-    background: radial-gradient(circle at top center, var(--accent-soft), transparent 45%), var(--bg);
+    background:
+      radial-gradient(circle at 18% 8%, rgba(16, 185, 129, 0.22), transparent 38%),
+      radial-gradient(circle at 82% 12%, rgba(56, 189, 248, 0.20), transparent 40%),
+      radial-gradient(circle at 50% 70%, rgba(168, 85, 247, 0.14), transparent 48%),
+      var(--bg);
     display: none;
   }
   .content-area.open { display: block; }
@@ -320,8 +332,8 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
   .panel-header h2 { font-size: 22px; }
   .btn {
     border: none;
-    padding: 8px 15px;
-    border-radius: 9px;
+    padding: 8px 16px;
+    border-radius: 12px;
     font-size: 13px;
     cursor: pointer;
     background: var(--accent);
@@ -333,9 +345,9 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
   .card {
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 14px 16px;
-    margin-bottom: 10px;
+    border-radius: 18px;
+    padding: 15px 18px;
+    margin-bottom: 12px;
   }
   .row {
     display: flex;
@@ -344,52 +356,109 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
     gap: 12px;
   }
   .newtab-hero {
-    max-width: 680px;
-    margin: 44px auto 0 auto;
+    max-width: 760px;
+    margin: 34px auto 0 auto;
     text-align: center;
   }
   .newtab-logo {
-    font-size: 40px;
+    font-size: 38px;
     font-weight: 800;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     letter-spacing: -0.6px;
   }
-  .newtab-logo span { color: var(--accent); }
+  .newtab-logo span {
+    background: linear-gradient(135deg, #34d399, #38bdf8, #a78bfa, #f472b6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
   .newtab-search {
     display: flex;
-    gap: 8px;
-    margin: 22px 0 28px 0;
+    align-items: center;
+    gap: 10px;
+    max-width: 620px;
+    margin: 22px auto 16px auto;
+    background: var(--bg2);
+    border: 1.5px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 6px 5px 18px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .newtab-search:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft), 0 12px 30px rgba(0, 0, 0, 0.28);
   }
   .newtab-search input {
     flex: 1;
-    height: 46px;
-    border-radius: 23px;
-    border: 1.5px solid var(--border);
-    background: var(--bg2);
+    height: 38px;
+    border: none;
+    background: transparent;
     color: var(--text);
-    padding: 0 20px;
     font-size: 15px;
     outline: none;
     user-select: text;
   }
-  .newtab-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .newtab-search button {
+    height: 38px;
+    padding: 0 20px;
+    border-radius: 999px;
+  }
+  .nt-chips {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .nt-chip {
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--text);
+    padding: 7px 15px;
+    border-radius: 999px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .nt-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
   .dial-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px;
-    text-align: left;
+    grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    gap: 14px;
+    text-align: center;
   }
   .dial-card {
     background: var(--bg2);
     border: 1px solid var(--border);
-    border-radius: 13px;
-    padding: 14px;
+    border-radius: 22px;
+    padding: 18px 12px;
     cursor: pointer;
-    transition: transform 0.12s, border-color 0.12s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 9px;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
   }
-  .dial-card:hover { transform: translateY(-2px); border-color: var(--accent); }
-  .dial-title { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dial-url { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dial-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  }
+  .dial-ico {
+    width: 46px;
+    height: 46px;
+    border-radius: 14px;
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 19px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 6px 14px rgba(0, 0, 0, 0.26);
+  }
+  .dial-title { font-weight: 600; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dial-url { font-size: 11px; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .search-input {
     width: 100%;
     height: 36px;
@@ -483,6 +552,7 @@ pub const CHROME_HTML: &str = r##"<!DOCTYPE html>
       <span id="sslBadge" title="Bảo mật">🔒</span>
       <input id="urlInput" type="text" placeholder="Nhập địa chỉ web hoặc tìm kiếm..." />
       <span class="badge" id="autofillBadge" style="display:none" title="Điền nhanh tài khoản đã lưu" onclick="send({type:'autofill_active'})">🔑 Điền TK</span>
+      <span class="badge" id="translateBadge" style="display:none" title="Dịch trang sang ngôn ngữ khác" onclick="MENU_MODE='translate';send({type:'open_translate_menu'})">🌐 Dịch</span>
       <span class="badge" id="adBadge" title="Chặn quảng cáo & tracker" onclick="send({type:'toggle_panel',panel:'settings'})">🛡️ 0</span>
       <button class="icon-btn" style="width:24px;height:24px" title="Lưu dấu trang (Ctrl+D)" id="bmStar" onclick="send({type:'toggle_bookmark'})">☆</button>
     </div>
@@ -691,15 +761,53 @@ window.__vnUpdateState = function(st) {
   }
   document.getElementById('sslBadge').textContent = active && active.url.startsWith('https://') ? '🔒' : (active && active.incognito ? '🕶' : '🌐');
   document.getElementById('autofillBadge').style.display = (active && active.has_saved_cred) ? 'inline-block' : 'none';
+  const trBadge = document.getElementById('translateBadge');
+  if (trBadge) trBadge.style.display = (active && active.url && active.url.startsWith('http') && !active.url.includes('translate.google.')) ? 'inline-block' : 'none';
   document.getElementById('adBadge').textContent = (st.settings.adblock_enabled ? '🛡️ ' : '⚪ ') + (active ? active.blocked_count : 0);
   document.getElementById('reloadBtn').innerHTML = (active && active.loading)
     ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>'
     : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
   const zoomPct = Math.round((active ? active.zoom : 1.0) * 100);
-  const menuWrap = document.getElementById('menuWrap');
+  let MENU_MODE = 'main';
+function openTranslatePicker() {
+  MENU_MODE = 'translate';
+  if (STATE) window.__vnUpdateState(STATE);
+}
+const menuWrap = document.getElementById('menuWrap');
   const menuBox = document.getElementById('menuBox');
+  if (!st.menu_open) MENU_MODE = 'main';
   menuWrap.classList.toggle('open', Boolean(st.menu_open));
-  if (st.menu_open) {
+  if (st.menu_open && MENU_MODE === 'translate') {
+    menuBox.innerHTML = `
+      <div style="padding:10px 12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <b>🌐 Dịch trang web</b>
+          <button class="btn soft" style="padding:3px 10px;font-size:12px" onclick="MENU_MODE='main';send({type:'toggle_menu'})">✕</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn" style="flex:1;padding:7px" onclick="MENU_MODE='main';send({type:'translate_page',lang:'vi'})">🇻🇳 Tiếng Việt</button>
+          <button class="btn soft" style="flex:1;padding:7px" onclick="MENU_MODE='main';send({type:'translate_page',lang:'en'})">🇺🇸 English</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Hoặc chọn ngôn ngữ khác:</div>
+        <div style="display:flex;gap:6px">
+          <select id="trLangSel" style="flex:1">
+            <option value="vi">Tiếng Việt</option>
+            <option value="en">English (Anh)</option>
+            <option value="ja">日本語 (Nhật)</option>
+            <option value="ko">한국어 (Hàn)</option>
+            <option value="zh-CN">中文 (Trung giản thể)</option>
+            <option value="zh-TW">繁體中文 (Trung phồn thể)</option>
+            <option value="fr">Français (Pháp)</option>
+            <option value="de">Deutsch (Đức)</option>
+            <option value="es">Español (Tây Ban Nha)</option>
+            <option value="th">ไทย (Thái)</option>
+            <option value="ru">Русский (Nga)</option>
+          </select>
+          <button class="btn" style="padding:6px 12px" onclick="const l=document.getElementById('trLangSel').value;MENU_MODE='main';send({type:'translate_page',lang:l})">Dịch</button>
+        </div>
+      </div>
+    `;
+  } else if (st.menu_open) {
     menuBox.innerHTML = `
       <div class="menu-item" onclick="send({type:'new_tab',incognito:false})"><span>➕ Tab mới</span><span class="menu-k">Ctrl+T</span></div>
       <div class="menu-item" onclick="send({type:'new_tab',incognito:true})"><span>🕶 Tab Ẩn danh</span><span class="menu-k">Ctrl+Shift+T</span></div>
@@ -720,6 +828,7 @@ window.__vnUpdateState = function(st) {
       <div class="menu-item" onclick="send({type:'toggle_find'})"><span>🔎 Tìm trong trang</span><span class="menu-k">Ctrl+F</span></div>
       <div class="menu-item" onclick="send({type:'picture_in_picture'})"><span>📺 Tách video nổi (PiP)</span></div>
       <div class="menu-item" onclick="send({type:'reader_mode'})"><span>📖 Chế độ đọc sách</span></div>
+      <div class="menu-item" onclick="openTranslatePicker()"><span>🌐 Dịch trang...</span></div>
       <div class="menu-item" onclick="send({type:'print_page'})"><span>🖨 In / Lưu PDF</span><span class="menu-k">Ctrl+P</span></div>
       <div class="menu-item" onclick="send({type:'toggle_fullscreen'})"><span>⛶ Toàn màn hình</span><span class="menu-k">F11</span></div>
       <div class="menu-item" onclick="send({type:'devtools'})"><span>⚙️ Công cụ lập trình</span><span class="menu-k">F12</span></div>
@@ -746,10 +855,11 @@ window.__vnUpdateState = function(st) {
   if (st.find_open) setTimeout(() => findInput.focus(), 20);
 
   const area = document.getElementById('contentArea');
-  const showIncogLock = !st.active_panel && active && active.incognito && st.incognito_locked;
-  const showPageError = !st.active_panel && !showIncogLock && active && Boolean(active.error_msg);
-  const showNewTab = !st.active_panel && !showIncogLock && !showPageError && active && active.url === 'vn://newtab';
-  const open = Boolean(st.active_panel) || showNewTab || showIncogLock || showPageError;
+  const panelMode = st.active_panel || (active && active.url && active.url.startsWith('vn://') && active.url !== 'vn://newtab' ? active.url.slice(5) : null);
+  const showIncogLock = !panelMode && active && active.incognito && st.incognito_locked;
+  const showPageError = !panelMode && !showIncogLock && active && Boolean(active.error_msg);
+  const showNewTab = !panelMode && !showIncogLock && !showPageError && active && active.url === 'vn://newtab';
+  const open = Boolean(panelMode) || showNewTab || showIncogLock || showPageError;
   area.classList.toggle('open', open);
   if (!open) return;
 
@@ -786,7 +896,7 @@ window.__vnUpdateState = function(st) {
     return;
   }
 
-  if (st.active_panel === 'history') {
+  if (panelMode === 'history') {
     area.innerHTML = `
       <div class="panel">
         <div class="panel-header">
@@ -806,7 +916,7 @@ window.__vnUpdateState = function(st) {
           </div>
         `).join('') : '<div class="card">Chưa có lịch sử nào.</div>'}
       </div>`;
-  } else if (st.active_panel === 'bookmarks') {
+  } else if (panelMode === 'bookmarks') {
     area.innerHTML = `
       <div class="panel">
         <div class="panel-header">
@@ -823,7 +933,7 @@ window.__vnUpdateState = function(st) {
           </div>
         `).join('')}
       </div>`;
-  } else if (st.active_panel === 'passwords') {
+  } else if (panelMode === 'passwords') {
     if (st.passwords_locked) {
       area.innerHTML = `
         <div class="newtab-hero" style="margin-top:60px;max-width:460px">
@@ -884,7 +994,7 @@ window.__vnUpdateState = function(st) {
           </div>`;
         }).join('') : '<div class="card">Chưa có mật khẩu nào được lưu.</div>'}
       </div>`;
-  } else if (st.active_panel === 'downloads') {
+  } else if (panelMode === 'downloads') {
     area.innerHTML = `
       <div class="panel">
         <div class="panel-header">
@@ -905,96 +1015,147 @@ window.__vnUpdateState = function(st) {
           </div>
         `).join('') : '<div class="card">Chưa có tệp nào được tải xuống.</div>'}
       </div>`;
-  } else if (st.active_panel === 'settings') {
+  } else if (panelMode === 'settings') {
+    const sec = window.__vnSetSec || 'all';
+    const cats = [
+      ['all', '☰ Tất cả cài đặt'],
+      ['autofill', '🔑 Tự động điền & Mật khẩu'],
+      ['privacy', '🛡️ Quyền riêng tư & Bảo mật'],
+      ['perf', '⚡ Hiệu suất'],
+      ['appearance', '🎨 Giao diện'],
+      ['search', '🔍 Công cụ tìm kiếm'],
+      ['default', '🌐 Trình duyệt mặc định'],
+      ['startup', '🚀 Khi khởi động'],
+      ['downloads', '⬇ Tải xuống'],
+      ['system', '🔄 Hệ thống & Cập nhật'],
+      ['about', 'ℹ️ Giới thiệu VN Surf']
+    ];
+    const show = (k) => sec === 'all' || sec === k;
     area.innerHTML = `
-      <div class="panel">
-        <div class="panel-header">
-          <h2>☰ Cài đặt & Giao diện VN Browser</h2>
-          <button class="btn soft" onclick="send({type:'toggle_panel',panel:null})">Đóng</button>
+      <div style="max-width:1040px;margin:0 auto;display:flex;gap:22px;align-items:flex-start">
+        <div style="width:240px;flex-shrink:0;position:sticky;top:0;background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:10px">
+          <div style="font-weight:800;font-size:16px;padding:8px 12px 12px">⚙️ Cài đặt</div>
+          ${cats.map(([id, lbl]) => `
+            <div onclick="window.__vnSetSec='${id}';window.__vnUpdateState(STATE)" style="padding:9px 12px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:${sec===id?'700':'500'};background:${sec===id?'var(--accent-soft)':'transparent'};color:${sec===id?'var(--accent)':'var(--text)'};margin-bottom:2px">${lbl}</div>
+          `).join('')}
         </div>
-        <div class="card row">
-          <div><b>Màu nhấn chủ đạo (Phong cách riêng)</b><div style="font-size:12px;color:var(--muted)">Tuỳ chỉnh màu sắc nút, thanh tiến trình và viền</div></div>
-          <div class="swatch-row">
-            ${ACCENTS.map(a => `<div class="swatch ${acc===a.hex?'active':''}" style="background:${a.hex}" title="${a.name}" data-hex="${a.hex}" onclick="send({type:'set_setting',key:'accent_color',value:this.dataset.hex})"></div>`).join('')}
+        <div style="flex:1;min-width:0">
+          <div class="panel-header">
+            <h2>${cats.find(c=>c[0]===sec)?.[1] || 'Cài đặt VN Surf'}</h2>
+            <button class="btn soft" onclick="send({type:'toggle_panel',panel:null})">Đóng</button>
           </div>
-        </div>
-        <div class="card row">
-          <div><b>Giao diện nền</b><div style="font-size:12px;color:var(--muted)">Chuyển giữa chế độ Tối và Sáng</div></div>
-          <button class="btn soft" onclick="send({type:'set_setting',key:'dark_mode',value:${!st.settings.dark_mode}})">${st.settings.dark_mode ? '🌙 Đang bật Tối' : '☀️ Đang bật Sáng'}</button>
-        </div>
-        <div class="card row">
-          <div><b>Công cụ tìm kiếm mặc định</b></div>
-          <select onchange="send({type:'set_setting',key:'search_engine',value:this.value})">
-            <option value="Google" ${st.settings.search_engine==='Google'?'selected':''}>Google</option>
-            <option value="DuckDuckGo" ${st.settings.search_engine==='DuckDuckGo'?'selected':''}>DuckDuckGo</option>
-            <option value="Bing" ${st.settings.search_engine==='Bing'?'selected':''}>Bing</option>
-          </select>
-        </div>
-        <div class="card row">
-          <div><b>Chặn quảng cáo & Tracker (AdBlock)</b><div style="font-size:12px;color:var(--muted)">Tự động chặn mạng quảng cáo và popup thừa</div></div>
-          <button class="btn ${st.settings.adblock_enabled?'':'soft'}" onclick="send({type:'set_setting',key:'adblock_enabled',value:${!st.settings.adblock_enabled}})">${st.settings.adblock_enabled ? '🛡️ Đang bật' : 'Đã tắt'}</button>
-        </div>
-        <div class="card row">
-          <div><b>Hiện thanh Dấu trang</b></div>
-          <button class="btn soft" onclick="send({type:'set_setting',key:'show_bookmarks_bar',value:${!st.settings.show_bookmarks_bar}})">${st.settings.show_bookmarks_bar ? 'Đang hiện' : 'Đang ẩn'}</button>
-        </div>
-        <div class="card row">
-          <div><b>Tự động ngủ tab nền (Tiết kiệm RAM)</b><div style="font-size:12px;color:var(--muted)">Giải phóng RAM các tab lâu không bấm tới</div></div>
-          <div style="display:flex;gap:8px;align-items:center">
-            ${st.settings.sleep_minutes > 0 ? `
-              <select onchange="send({type:'set_setting',key:'sleep_minutes',value:Number(this.value)})">
-                <option value="3" ${st.settings.sleep_minutes===3?'selected':''}>Sau 3 phút</option>
-                <option value="5" ${st.settings.sleep_minutes===5?'selected':''}>Sau 5 phút</option>
-                <option value="15" ${st.settings.sleep_minutes===15?'selected':''}>Sau 15 phút</option>
-                <option value="30" ${st.settings.sleep_minutes===30?'selected':''}>Sau 30 phút</option>
-              </select>
-            ` : ''}
-            <button class="btn ${st.settings.sleep_minutes > 0 ? '' : 'soft'}" onclick="send({type:'set_setting',key:'sleep_minutes',value:${st.settings.sleep_minutes > 0 ? 0 : 3}})">${st.settings.sleep_minutes > 0 ? '⚡ Đang bật' : 'Đã tắt'}</button>
+          ${show('autofill') ? `
+          <div class="card row">
+            <div><b>🔑 Trình quản lý mật khẩu (Khoá bằng mật khẩu máy)</b><div style="font-size:12px;color:var(--muted)">Xem, sao chép và tự điền tài khoản đã mã hoá DPAPI</div></div>
+            <button class="btn" onclick="send({type:'toggle_panel',panel:'passwords'})">Mở két sắt</button>
+          </div>` : ''}
+          ${show('appearance') ? `
+          <div class="card row">
+            <div><b>Màu nhấn chủ đạo (Phong cách riêng)</b><div style="font-size:12px;color:var(--muted)">Tuỳ chỉnh màu sắc nút, thanh tiến trình và viền</div></div>
+            <div class="swatch-row">
+              ${ACCENTS.map(a => `<div class="swatch ${acc===a.hex?'active':''}" style="background:${a.hex}" title="${a.name}" data-hex="${a.hex}" onclick="send({type:'set_setting',key:'accent_color',value:this.dataset.hex})"></div>`).join('')}
+            </div>
           </div>
-        </div>
-        <div class="card row">
-          <div><b>Khôi phục các tab phiên trước khi mở lại</b></div>
-          <button class="btn soft" onclick="send({type:'set_setting',key:'restore_session',value:${!st.settings.restore_session}})">${st.settings.restore_session ? 'Đang bật' : 'Đã tắt'}</button>
-        </div>
-        <div class="card row">
-          <div><b>Vượt chặn DNS nhà mạng (DoH 1.1.1.1)</b><div style="font-size:12px;color:var(--muted)">Tự động dùng Cloudflare DNS mã hoá để vào web bị nhà mạng chặn DNS (áp dụng khi mở lại app)</div></div>
-          <button class="btn ${st.settings.doh_enabled?'':'soft'}" onclick="send({type:'set_setting',key:'doh_enabled',value:${!st.settings.doh_enabled}})">${st.settings.doh_enabled ? '🌐 Đang bật' : 'Đã tắt'}</button>
-        </div>
-        <div class="card row">
-          <div><b>Proxy vượt chặn nâng cao (tuỳ chọn)</b><div style="font-size:12px;color:var(--muted)">Ví dụ: http://127.0.0.1:8080 hoặc socks5://127.0.0.1:1080 (áp dụng khi mở lại app)</div></div>
-          <div style="display:flex;gap:6px">
-            <input id="proxyInput" class="search-input" style="width:220px;margin:0;height:32px" placeholder="Để trống = Trực tiếp" value="${esc(st.settings.proxy_url||'')}" />
-            <button class="btn soft" onclick="send({type:'set_setting',key:'proxy_url',value:document.getElementById('proxyInput').value})">Lưu</button>
+          <div class="card row">
+            <div><b>Giao diện nền (Tối / Sáng)</b><div style="font-size:12px;color:var(--muted)">Chuyển giữa nền tối xám mờ Chrome và nền sáng</div></div>
+            <button class="btn soft" onclick="send({type:'set_setting',key:'dark_mode',value:${!st.settings.dark_mode}})">${st.settings.dark_mode ? '🌙 Đang bật Tối' : '☀️ Đang bật Sáng'}</button>
           </div>
-        </div>
-        <div class="card row">
-          <div><b>Khoá Tab Ẩn danh bằng mã PIN</b><div style="font-size:12px;color:var(--muted)">${st.settings.incognito_pin ? '🔒 Đang bật mã PIN bảo vệ Tab Ẩn danh' : 'Chưa đặt mã PIN'}</div></div>
-          <div style="display:flex;gap:6px">
-            <input id="setPinInput" type="password" class="search-input" style="width:140px;margin:0;height:32px" placeholder="Nhập PIN mới..." />
-            <button class="btn" onclick="send({type:'set_setting',key:'incognito_pin',value:document.getElementById('setPinInput').value})">Đặt PIN</button>
-            ${st.settings.incognito_pin ? `<button class="btn danger" onclick="send({type:'set_setting',key:'incognito_pin',value:''})">Gỡ PIN</button>` : ''}
+          <div class="card row">
+            <div><b>Hiện thanh Dấu trang</b></div>
+            <button class="btn soft" onclick="send({type:'set_setting',key:'show_bookmarks_bar',value:${!st.settings.show_bookmarks_bar}})">${st.settings.show_bookmarks_bar ? 'Đang hiện' : 'Đang ẩn'}</button>
+          </div>` : ''}
+          ${show('search') ? `
+          <div class="card row">
+            <div><b>Công cụ tìm kiếm mặc định</b><div style="font-size:12px;color:var(--muted)">Dùng khi gõ từ khoá trên thanh địa chỉ</div></div>
+            <select onchange="send({type:'set_setting',key:'search_engine',value:this.value})">
+              <option value="Google" ${st.settings.search_engine==='Google'?'selected':''}>Google</option>
+              <option value="DuckDuckGo" ${st.settings.search_engine==='DuckDuckGo'?'selected':''}>DuckDuckGo</option>
+              <option value="Bing" ${st.settings.search_engine==='Bing'?'selected':''}>Bing</option>
+            </select>
+          </div>` : ''}
+          ${show('privacy') ? `
+          <div class="card row">
+            <div><b>Chặn quảng cáo, YouTube Ads & Pop-up</b><div style="font-size:12px;color:var(--muted)">Tự động chặn quảng cáo web, YouTube và tab nhảy tự động</div></div>
+            <button class="btn ${st.settings.adblock_enabled?'':'soft'}" onclick="send({type:'set_setting',key:'adblock_enabled',value:${!st.settings.adblock_enabled}})">${st.settings.adblock_enabled ? '🛡️ Đang bật' : 'Đã tắt'}</button>
           </div>
-        </div>
-        <div class="card row">
-          <div><b>Đặt làm trình duyệt mặc định</b><div style="font-size:12px;color:var(--muted)">Mở nhanh cài đặt Default Apps của Windows để chọn VN Browser</div></div>
-          <button class="btn soft" onclick="send({type:'set_default_browser'})">🌐 Đặt mặc định</button>
-        </div>
-        <div class="card row">
-          <div><b>Cập nhật VN Browser (v${esc(st.app_version||'1.1.0')})</b><div style="font-size:12px;color:var(--muted)">${
-            st.update_status && st.update_status.status === 'checking' ? 'Đang kiểm tra bản mới trên GitHub...' :
-            st.update_status && st.update_status.status === 'downloading' ? 'Đang tải và tự cài bản cập nhật...' :
-            st.update_status && st.update_status.status === 'up_to_date' ? '✓ Bạn đang dùng phiên bản mới nhất!' :
-            st.update_status && st.update_status.status === 'available' ? '🎉 Có bản mới v' + esc(st.update_status.version) + '!' :
-            st.update_status && st.update_status.status === 'error' ? esc(st.update_status.message) :
-            'Kiểm tra và tự động cập nhật từ GitHub Releases'
-          }</div></div>
-          ${st.update_status && st.update_status.status === 'available'
-            ? `<button class="btn" data-url="${esc(st.update_status.url)}" onclick="send({type:'apply_update',url:this.dataset.url})">⬇ Cập nhật ngay</button>`
-            : `<button class="btn soft" onclick="send({type:'check_updates'})">🔄 Kiểm tra cập nhật</button>`}
-        </div>
-        <div class="card row">
-          <div><b>Xoá dữ liệu duyệt web</b><div style="font-size:12px;color:var(--muted)">Xoá toàn bộ lịch sử, danh sách tải xuống và phiên tab đã lưu</div></div>
-          <button class="btn danger" onclick="send({type:'clear_all_data'})">Xoá dữ liệu</button>
+          <div class="card row">
+            <div><b>Vượt chặn DNS nhà mạng (DoH 1.1.1.1)</b><div style="font-size:12px;color:var(--muted)">Tự động dùng Cloudflare DNS mã hoá (áp dụng khi mở lại app)</div></div>
+            <button class="btn ${st.settings.doh_enabled?'':'soft'}" onclick="send({type:'set_setting',key:'doh_enabled',value:${!st.settings.doh_enabled}})">${st.settings.doh_enabled ? '🌐 Đang bật' : 'Đã tắt'}</button>
+          </div>
+          <div class="card row">
+            <div><b>Proxy vượt chặn nâng cao (tuỳ chọn)</b><div style="font-size:12px;color:var(--muted)">Ví dụ: http://127.0.0.1:8080 hoặc socks5://127.0.0.1:1080</div></div>
+            <div style="display:flex;gap:6px">
+              <input id="proxyInput" class="search-input" style="width:200px;margin:0;height:32px" placeholder="Để trống = Trực tiếp" value="${esc(st.settings.proxy_url||'')}" />
+              <button class="btn soft" onclick="send({type:'set_setting',key:'proxy_url',value:document.getElementById('proxyInput').value})">Lưu</button>
+            </div>
+          </div>
+          <div class="card row">
+            <div><b>Khoá Tab Ẩn danh bằng mã PIN</b><div style="font-size:12px;color:var(--muted)">${st.settings.incognito_pin ? '🔒 Đang bật PIN (đổi/gỡ cần mật khẩu máy)' : 'Chưa đặt mã PIN'}</div></div>
+            <div style="display:flex;gap:6px">
+              <input id="setPinInput" type="password" class="search-input" style="width:130px;margin:0;height:32px" placeholder="Nhập PIN mới..." />
+              <button class="btn" onclick="send({type:'set_setting',key:'incognito_pin',value:document.getElementById('setPinInput').value})">Đặt PIN</button>
+              ${st.settings.incognito_pin ? `<button class="btn danger" onclick="send({type:'set_setting',key:'incognito_pin',value:''})">Gỡ PIN</button>` : ''}
+            </div>
+          </div>
+          <div class="card row">
+            <div><b>Xoá dữ liệu duyệt web</b><div style="font-size:12px;color:var(--muted)">Xoá toàn bộ lịch sử, danh sách tải xuống và phiên tab đã lưu</div></div>
+            <button class="btn danger" onclick="send({type:'clear_all_data'})">Xoá dữ liệu</button>
+          </div>` : ''}
+          ${show('perf') ? `
+          <div class="card row">
+            <div><b>Tự động ngủ tab nền (Tiết kiệm RAM)</b><div style="font-size:12px;color:var(--muted)">Giải phóng RAM các tab lâu không bấm tới</div></div>
+            <div style="display:flex;gap:8px;align-items:center">
+              ${st.settings.sleep_minutes > 0 ? `
+                <select onchange="send({type:'set_setting',key:'sleep_minutes',value:Number(this.value)})">
+                  <option value="3" ${st.settings.sleep_minutes===3?'selected':''}>Sau 3 phút</option>
+                  <option value="5" ${st.settings.sleep_minutes===5?'selected':''}>Sau 5 phút</option>
+                  <option value="15" ${st.settings.sleep_minutes===15?'selected':''}>Sau 15 phút</option>
+                  <option value="30" ${st.settings.sleep_minutes===30?'selected':''}>Sau 30 phút</option>
+                </select>
+              ` : ''}
+              <button class="btn ${st.settings.sleep_minutes > 0 ? '' : 'soft'}" onclick="send({type:'set_setting',key:'sleep_minutes',value:${st.settings.sleep_minutes > 0 ? 0 : 3}})">${st.settings.sleep_minutes > 0 ? '⚡ Đang bật' : 'Đã tắt'}</button>
+            </div>
+          </div>` : ''}
+          ${show('startup') ? `
+          <div class="card row">
+            <div><b>Khôi phục các tab phiên trước khi mở lại</b><div style="font-size:12px;color:var(--muted)">Mở lại đúng các tab đang xem ở lần chạy trước</div></div>
+            <button class="btn soft" onclick="send({type:'set_setting',key:'restore_session',value:${!st.settings.restore_session}})">${st.settings.restore_session ? 'Đang bật' : 'Đã tắt'}</button>
+          </div>` : ''}
+          ${show('default') ? `
+          <div class="card row">
+            <div><b>Đặt làm trình duyệt mặc định</b><div style="font-size:12px;color:var(--muted)">Mở nhanh cài đặt Default Apps của Windows để chọn VN Surf</div></div>
+            <button class="btn soft" onclick="send({type:'set_default_browser'})">🌐 Đặt mặc định</button>
+          </div>` : ''}
+          ${show('downloads') ? `
+          <div class="card row">
+            <div><b>Thư mục tải xuống</b><div style="font-size:12px;color:var(--muted)">Xem danh sách hoặc mở thư mục chứa tệp đã tải</div></div>
+            <div style="display:flex;gap:8px">
+              <button class="btn soft" onclick="send({type:'toggle_panel',panel:'downloads'})">⬇ Danh sách tải</button>
+              <button class="btn soft" onclick="send({type:'open_downloads_dir'})">📂 Mở thư mục</button>
+            </div>
+          </div>` : ''}
+          ${show('system') ? `
+          <div class="card row">
+            <div><b>Cập nhật VN Surf (v${esc(st.app_version||'1.1.0')})</b><div style="font-size:12px;color:var(--muted)">${
+              st.update_status && st.update_status.status === 'checking' ? 'Đang kiểm tra bản mới trên GitHub...' :
+              st.update_status && st.update_status.status === 'downloading' ? 'Đang tải và tự cài bản cập nhật...' :
+              st.update_status && st.update_status.status === 'up_to_date' ? '✓ Bạn đang dùng phiên bản mới nhất!' :
+              st.update_status && st.update_status.status === 'available' ? '🎉 Có bản mới v' + esc(st.update_status.version) + '!' :
+              st.update_status && st.update_status.status === 'error' ? esc(st.update_status.message) :
+              'Kiểm tra và tự động cập nhật từ GitHub Releases'
+            }</div></div>
+            ${st.update_status && st.update_status.status === 'available'
+              ? `<button class="btn" data-url="${esc(st.update_status.url)}" onclick="send({type:'apply_update',url:this.dataset.url})">⬇ Cập nhật ngay</button>`
+              : `<button class="btn soft" onclick="send({type:'check_updates'})">🔄 Kiểm tra cập nhật</button>`}
+          </div>` : ''}
+          ${show('about') ? `
+          <div class="card">
+            <b>ℹ️ Giới thiệu VN Surf v${esc(st.app_version||'1.1.0')}</b>
+            <div style="font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.6">
+              Trình duyệt tối ưu RAM, tích hợp chặn quảng cáo web & YouTube, chống nhảy tab tự động, DoH 1.1.1.1 và két sắt mật khẩu mã hoá DPAPI khoá bằng mật khẩu Windows.<br>
+              Đã chặn tổng cộng: <b style="color:var(--accent)">${st.total_ads_blocked || 0}</b> quảng cáo & pop-up.
+            </div>
+          </div>` : ''}
         </div>
       </div>`;
   } else if (showNewTab) {
@@ -1011,19 +1172,39 @@ window.__vnUpdateState = function(st) {
             <line x1="19.5" y1="32" x2="44.5" y2="32" stroke="#ffffff" stroke-width="2.2"/>
           </svg>
         </div>
-        <div class="newtab-logo">VN <span>Browser</span> ${active.incognito ? '🕶' : ''}</div>
-        <div style="color:var(--muted);font-size:13.5px">${active.incognito ? 'Chế độ Ẩn danh: Không lưu lịch sử và cookie sau khi đóng tab.' : 'Siêu nhẹ RAM · Tích hợp AdBlock & Ngủ tab nền thông minh.'}</div>
+        <div class="newtab-logo">VN <span>Surf</span> ${active.incognito ? '🕶' : ''}</div>
+        <div style="color:var(--muted);font-size:13.5px">${active.incognito ? 'Chế độ Ẩn danh: Không lưu lịch sử và cookie sau khi đóng tab.' : 'Siêu nhẹ RAM · Màu sắc rực rỡ · Chặn quảng cáo & Ngủ tab thông minh.'}</div>
         <div class="newtab-search">
+          <span style="opacity:0.75;font-size:16px">🔍</span>
           <input id="ntSearch" type="text" placeholder="Tìm kiếm trên ${esc(st.settings.search_engine)} hoặc nhập URL..." onkeydown="if(event.key==='Enter') send({type:'navigate',input:this.value})" />
-          <button class="btn" onclick="send({type:'navigate',input:document.getElementById('ntSearch').value})">Đi</button>
+          <button class="btn" onclick="send({type:'navigate',input:document.getElementById('ntSearch').value})">Tìm</button>
+        </div>
+        <div class="nt-chips">
+          <button class="nt-chip" onclick="send({type:'new_tab',incognito:true})">🕵️ Tab Ẩn danh</button>
+          <button class="nt-chip" onclick="send({type:'toggle_panel',panel:'passwords'})">🔑 Mật khẩu</button>
+          <button class="nt-chip" onclick="send({type:'toggle_panel',panel:'settings'})">⚙️ Cài đặt</button>
         </div>
         <div class="dial-grid">
-          ${st.bookmarks.map(b => `
+          ${st.bookmarks.map((b, idx) => {
+            const grads = [
+              'linear-gradient(135deg,#3b82f6,#06b6d4)',
+              'linear-gradient(135deg,#ef4444,#f97316)',
+              'linear-gradient(135deg,#6366f1,#a855f7)',
+              'linear-gradient(135deg,#10b981,#14b8a6)',
+              'linear-gradient(135deg,#ec4899,#f43f5e)',
+              'linear-gradient(135deg,#8b5cf6,#3b82f6)'
+            ];
+            const g = grads[idx % grads.length];
+            const letter = esc((b.title || 'W').trim().charAt(0).toUpperCase());
+            let host = b.url;
+            try { host = new URL(b.url).hostname.replace(/^www\./, ''); } catch (_) {}
+            return `
             <div class="dial-card" data-url="${esc(b.url)}" onclick="send({type:'navigate',input:this.dataset.url})">
-              <div class="dial-title">★ ${esc(b.title)}</div>
-              <div class="dial-url">${esc(b.url)}</div>
-            </div>
-          `).join('')}
+              <div class="dial-ico" style="background:${g}">${letter}</div>
+              <div class="dial-title">${esc(b.title)}</div>
+              <div class="dial-url">${esc(host)}</div>
+            </div>`;
+          }).join('')}
         </div>
         <div style="margin-top:26px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap">
           <div class="badge" style="padding:6px 14px;font-size:12px">🛡️ Đã chặn ${st.total_ads_blocked || 0} quảng cáo & pop-up</div>

@@ -39,9 +39,16 @@ enum UserEvent {
     OpenNewTab(String, bool),
     DownloadStarted(String, String, String),
     DownloadCompleted(String, bool),
-    Suggestions(Vec<Suggestion>),
+    Suggestions(u64, Vec<Suggestion>),
     UpdateStateChanged,
-    OsAuthDone(bool, bool),
+    OsAuthDone(bool, OsAuthAction),
+}
+
+#[derive(Debug, Clone)]
+enum OsAuthAction {
+    UnlockPasswords,
+    Autofill,
+    SetIncognitoPin(String),
 }
 
 #[derive(Deserialize)]
@@ -100,6 +107,8 @@ enum IpcMsg {
     SetDefaultBrowser,
     CheckUpdates,
     ApplyUpdate { url: String },
+    OpenTranslateMenu,
+    TranslatePage { #[serde(default)] lang: String },
 }
 
 #[derive(Serialize)]
@@ -451,7 +460,7 @@ fn layout_views(
     let win_h = phys.height as f64 / scale;
 
     let active_tab = tabs.iter().find(|t| t.id == active_tab_id);
-    let active_is_newtab = active_tab.map(|t| t.url == "vn://newtab").unwrap_or(false);
+    let active_is_newtab = active_tab.map(|t| t.url.starts_with("vn://")).unwrap_or(false);
     let active_is_locked_incog = incognito_locked && active_tab.map(|t| t.incognito).unwrap_or(false);
     let active_has_error = active_tab.map(|t| t.error_msg).unwrap_or(false);
     let overlay_open = active_panel.is_some() || active_is_newtab || active_is_locked_incog || active_has_error;
@@ -602,7 +611,7 @@ fn verify_os_user(_reason: &str) -> bool {
 fn spawn_os_auth(
     auth_pending: &mut bool,
     reason: &'static str,
-    trigger_autofill: bool,
+    action: OsAuthAction,
     proxy: &EventLoopProxy<UserEvent>,
 ) {
     if *auth_pending {
@@ -612,7 +621,7 @@ fn spawn_os_auth(
     let p = proxy.clone();
     std::thread::spawn(move || {
         let ok = verify_os_user(reason);
-        let _ = p.send_event(UserEvent::OsAuthDone(ok, trigger_autofill));
+        let _ = p.send_event(UserEvent::OsAuthDone(ok, action));
     });
 }
 
@@ -713,7 +722,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", browser_args.join(" "));
 
     let mut wb = WindowBuilder::new()
-        .with_title("VN Browser")
+        .with_title("VN Surf")
+        .with_visible(false)
         .with_inner_size(LogicalSize::new(
             data.settings.window_width.max(640.0),
             data.settings.window_height.max(480.0),
@@ -737,6 +747,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ipc_proxy = proxy.clone();
     let chrome = WebViewBuilder::new_with_web_context(&mut normal_ctx)
+        .with_background_color((32, 33, 36, 255))
         .with_html(ui_html::CHROME_HTML)
         .with_bounds(Rect {
             position: LogicalPosition::new(0.0, 0.0).into(),
@@ -758,9 +769,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut passwords_locked = true;
     let mut revealed_pw: Option<(String, String)> = None;
     let mut suggest_count: usize = 0;
+    let mut suggest_seq: u64 = 0;
     let update_state = Arc::new(Mutex::new(UpdateStatus::Idle));
     let mut pending_save_cred: Option<(String, String, String)> = None;
     let mut auth_pending = false;
+    let mut window_shown = false;
 
     let initial_tabs: Vec<SavedTab> = if data.settings.restore_session && !data.last_session.is_empty() {
         data.last_session.clone()
@@ -1007,7 +1020,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             data.save();
                         }
                     }
-                    UserEvent::Suggestions(items) => {
+                    UserEvent::Suggestions(seq, items) => {
+                        if seq != suggest_seq {
+                            return;
+                        }
                         suggest_count = items.len();
                         if let Ok(json) = serde_json::to_string(&items) {
                             let _ = chrome.evaluate_script(&format!(
@@ -1019,12 +1035,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return;
                     }
                     UserEvent::UpdateStateChanged => {}
-                    UserEvent::OsAuthDone(ok, trigger_autofill) => {
+                    UserEvent::OsAuthDone(ok, action) => {
                         auth_pending = false;
                         if ok {
-                            passwords_locked = false;
-                            if trigger_autofill {
-                                autofill_active_tab(&tabs, active_tab_id, &data, &chrome);
+                            match action {
+                                OsAuthAction::UnlockPasswords => {
+                                    passwords_locked = false;
+                                }
+                                OsAuthAction::Autofill => {
+                                    passwords_locked = false;
+                                    autofill_active_tab(&tabs, active_tab_id, &data, &chrome);
+                                }
+                                OsAuthAction::SetIncognitoPin(new_pin) => {
+                                    data.settings.incognito_pin = new_pin;
+                                    incognito_locked = !data.settings.incognito_pin.is_empty();
+                                    data.save();
+                                    let msg = if incognito_locked {
+                                        "🔒 Đã cập nhật mã PIN khoá Tab Ẩn danh!"
+                                    } else {
+                                        "🔓 Đã gỡ mã PIN Tab Ẩn danh."
+                                    };
+                                    let _ = chrome.evaluate_script(&format!(
+                                        "window.__vnToast && window.__vnToast({});",
+                                        serde_json::to_string(msg).unwrap_or_default()
+                                    ));
+                                }
                             }
                         } else {
                             let _ = chrome.evaluate_script("window.__vnToast && window.__vnToast('🔒 Xác minh mật khẩu máy thất bại hoặc đã huỷ!');");
@@ -1036,8 +1071,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             menu_open = false;
                         }
                         match msg {
-                            IpcMsg::Ready => {}
+                            IpcMsg::Ready => {
+                                if !window_shown {
+                                    window_shown = true;
+                                    layout_views(&window, &chrome, &mut tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, suggest_count, &data);
+                                    push_state(&chrome, &tabs, active_tab_id, &active_panel, find_open, menu_open, incognito_locked, passwords_locked, &revealed_pw, &data, &update_state);
+                                    window.set_visible(true);
+                                }
+                            }
                             IpcMsg::Suggest { query } => {
+                                suggest_seq += 1;
+                                let seq = suggest_seq;
                                 let q = query.trim().to_string();
                                 if q.is_empty() {
                                     suggest_count = 0;
@@ -1110,11 +1154,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             }
                                         }
                                     }
-                                    let _ = p_sug.send_event(UserEvent::Suggestions(items));
+                                    let _ = p_sug.send_event(UserEvent::Suggestions(seq, items));
                                 });
                                 return;
                             }
                             IpcMsg::NewTab { incognito } => {
+                                suggest_seq += 1;
+                                suggest_count = 0;
                                 let id = next_tab_id;
                                 next_tab_id += 1;
                                 tabs.push(TabState {
@@ -1136,6 +1182,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 active_panel = None;
                             }
                             IpcMsg::SwitchTab { id } => {
+                                suggest_seq += 1;
+                                suggest_count = 0;
                                 active_tab_id = id;
                                 active_panel = None;
                                 if let Some(t) = tabs.iter_mut().find(|t| t.id == id) {
@@ -1333,6 +1381,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let _ = proxy.send_event(UserEvent::OpenNewTab(url, inc));
                             }
                             IpcMsg::Navigate { input } => {
+                                suggest_seq += 1;
                                 suggest_count = 0;
                                 let target = resolve_address_input(&input, &data.settings.search_engine);
                                 active_panel = None;
@@ -1429,18 +1478,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 data.save();
                             }
                             IpcMsg::TogglePanel { panel } => {
+                                suggest_count = 0;
                                 menu_open = false;
-                                active_panel = if active_panel == panel { None } else { panel };
-                                // Always require Windows authentication every time user opens or leaves the Password Manager
                                 passwords_locked = true;
                                 revealed_pw = None;
-                                if active_panel.as_deref() == Some("passwords") {
-                                    spawn_os_auth(
-                                        &mut auth_pending,
-                                        "VN Browser: Xác minh mật khẩu máy để mở khoá Mật khẩu đã lưu",
-                                        false,
-                                        &proxy,
-                                    );
+                                if let Some(p) = panel {
+                                    let vn_url = format!("vn://{}", p);
+                                    if let Some(existing) = tabs.iter().find(|t| t.url == vn_url) {
+                                        active_tab_id = existing.id;
+                                    } else {
+                                        let nid = next_tab_id;
+                                        next_tab_id += 1;
+                                        let title = match p.as_str() {
+                                            "downloads" => "⬇ Tải xuống",
+                                            "history" => "🕒 Lịch sử",
+                                            "bookmarks" => "★ Dấu trang",
+                                            "passwords" => "🔑 Mật khẩu",
+                                            "settings" => "⚙️ Cài đặt",
+                                            _ => "VN Surf",
+                                        }
+                                        .to_string();
+                                        tabs.push(TabState {
+                                            id: nid,
+                                            title,
+                                            url: vn_url,
+                                            pinned: false,
+                                            incognito: false,
+                                            sleeping: false,
+                                            loading: false,
+                                            muted: false,
+                                            error_msg: false,
+                                            blocked_count: 0,
+                                            zoom: 1.0,
+                                            last_active: now_secs(),
+                                            webview: None,
+                                        });
+                                        active_tab_id = nid;
+                                    }
+                                    active_panel = None;
+                                    if p == "passwords" {
+                                        spawn_os_auth(
+                                            &mut auth_pending,
+                                            "VN Surf: Xác minh mật khẩu máy để mở khoá Mật khẩu đã lưu",
+                                            OsAuthAction::UnlockPasswords,
+                                            &proxy,
+                                        );
+                                    }
+                                } else {
+                                    active_panel = None;
+                                    if let Some(pos) = tabs.iter().position(|t| t.id == active_tab_id) {
+                                        if tabs[pos].url.starts_with("vn://") && tabs[pos].url != "vn://newtab" {
+                                            if tabs.len() > 1 {
+                                                tabs.remove(pos);
+                                                active_tab_id = tabs[pos.min(tabs.len() - 1)].id;
+                                            } else {
+                                                tabs[pos].url = "vn://newtab".into();
+                                                tabs[pos].title = "Tab mới".into();
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             IpcMsg::ToggleMenu => {
@@ -1520,7 +1616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 spawn_os_auth(
                                     &mut auth_pending,
                                     "VN Browser: Xác minh mật khẩu máy để mở khoá Mật khẩu đã lưu",
-                                    false,
+                                    OsAuthAction::UnlockPasswords,
                                     &proxy,
                                 );
                             }
@@ -1600,17 +1696,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         let _ = chrome.evaluate_script("window.__vnToast && window.__vnToast('🌐 Đã lưu Proxy (khởi động lại app để áp dụng)');");
                                     }
                                     "incognito_pin" => {
-                                        data.settings.incognito_pin = value.as_str().unwrap_or("").trim().to_string();
-                                        incognito_locked = !data.settings.incognito_pin.is_empty();
-                                        let msg = if incognito_locked {
-                                            "🔒 Đã bật mã PIN khoá Tab Ẩn danh!"
+                                        let new_pin = value.as_str().unwrap_or("").trim().to_string();
+                                        if !data.settings.incognito_pin.is_empty() {
+                                            spawn_os_auth(
+                                                &mut auth_pending,
+                                                "VN Surf: Xác minh mật khẩu máy để thay đổi hoặc gỡ mã PIN Ẩn danh",
+                                                OsAuthAction::SetIncognitoPin(new_pin),
+                                                &proxy,
+                                            );
                                         } else {
-                                            "🔓 Đã gỡ mã PIN Tab Ẩn danh."
-                                        };
-                                        let _ = chrome.evaluate_script(&format!(
-                                            "window.__vnToast && window.__vnToast({});",
-                                            serde_json::to_string(msg).unwrap_or_default()
-                                        ));
+                                            data.settings.incognito_pin = new_pin;
+                                            incognito_locked = !data.settings.incognito_pin.is_empty();
+                                            let msg = if incognito_locked {
+                                                "🔒 Đã bật mã PIN khoá Tab Ẩn danh!"
+                                            } else {
+                                                "🔓 Đã gỡ mã PIN Tab Ẩn danh."
+                                            };
+                                            let _ = chrome.evaluate_script(&format!(
+                                                "window.__vnToast && window.__vnToast({});",
+                                                serde_json::to_string(msg).unwrap_or_default()
+                                            ));
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -1659,7 +1765,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     spawn_os_auth(
                                         &mut auth_pending,
                                         "VN Browser: Xác minh mật khẩu máy để tự điền tài khoản",
-                                        true,
+                                        OsAuthAction::Autofill,
                                         &proxy,
                                     );
                                 } else {
@@ -1695,6 +1801,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 apply_update(url, Arc::clone(&update_state), move || {
                                     let _ = p.send_event(UserEvent::UpdateStateChanged);
                                 });
+                            }
+                            IpcMsg::OpenTranslateMenu => {
+                                suggest_count = 0;
+                                menu_open = true;
+                            }
+                            IpcMsg::TranslatePage { lang } => {
+                                menu_open = false;
+                                let target_lang = if lang.trim().is_empty() { "vi" } else { lang.trim() };
+                                if let Some(tab) = tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                                    if tab.url.starts_with("http://") || tab.url.starts_with("https://") {
+                                        let enc: String = tab
+                                            .url
+                                            .bytes()
+                                            .map(|b| match b {
+                                                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                                                _ => format!("%{:02X}", b),
+                                            })
+                                            .collect();
+                                        let tr_url = format!("https://translate.google.com/translate?sl=auto&tl={}&u={}", target_lang, enc);
+                                        tab.url = tr_url.clone();
+                                        if let Some(wv) = &tab.webview {
+                                            let _ = wv.load_url(&tr_url);
+                                        }
+                                        let _ = chrome.evaluate_script(&format!(
+                                            "window.__vnToast && window.__vnToast({});",
+                                            serde_json::to_string(&format!("🌐 Đang dịch trang sang [{}]...", target_lang)).unwrap_or_default()
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }

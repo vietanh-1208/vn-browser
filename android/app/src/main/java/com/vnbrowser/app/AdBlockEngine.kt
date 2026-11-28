@@ -30,24 +30,25 @@ object AdBlockEngine {
         }
     }
 
-    private fun isYouTubeHost(host: String): Boolean {
-        return host == "youtube.com" || host.endsWith(".youtube.com") ||
-            host == "youtu.be" || host.endsWith(".googlevideo.com") ||
-            host.endsWith(".ytimg.com")
+    private fun isYouTubeMediaHost(host: String): Boolean {
+        return host.endsWith(".googlevideo.com") || host.endsWith(".ytimg.com")
     }
 
     fun shouldBlockRequest(requestUrl: String, pageUrl: String?, adblockEnabled: Boolean): Boolean {
         if (!adblockEnabled) return false
-        val pageHost = extractHost(pageUrl)
-        if (isYouTubeHost(pageHost)) return false
-
+        val lower = requestUrl.lowercase(Locale.ROOT)
+        if (lower.contains("youtube.com/api/stats/ads") ||
+            lower.contains("youtube.com/pagead/") ||
+            lower.contains("get_midroll_info")
+        ) {
+            return true
+        }
         val reqHost = extractHost(requestUrl)
-        if (reqHost.isEmpty() || isYouTubeHost(reqHost)) return false
+        if (reqHost.isEmpty() || isYouTubeMediaHost(reqHost)) return false
 
         if (blockedHosts.any { reqHost == it || reqHost.endsWith(".$it") || reqHost.contains(it) }) {
             return true
         }
-        val lower = requestUrl.lowercase(Locale.ROOT)
         return lower.contains("/ads/") || lower.contains("banner_ad") ||
             lower.contains("popunder") || lower.contains("affiliatecode=")
     }

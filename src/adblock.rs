@@ -110,9 +110,6 @@ pub fn is_blocked_url(url: &str, page_host: &str, enabled: bool, whitelist: &[St
     if !enabled {
         return false;
     }
-    if page_host.contains("youtube.com") || page_host.contains("youtu.be") {
-        return false;
-    }
     if whitelist
         .iter()
         .any(|w| page_host == w || page_host.ends_with(&format!(".{}", w)))
@@ -120,7 +117,13 @@ pub fn is_blocked_url(url: &str, page_host: &str, enabled: bool, whitelist: &[St
         return false;
     }
     let lower = url.to_lowercase();
-    if lower.contains("affiliatecode=") || lower.contains("aff_id=") || lower.contains("/popunder") {
+    if lower.contains("affiliatecode=")
+        || lower.contains("aff_id=")
+        || lower.contains("/popunder")
+        || lower.contains("youtube.com/api/stats/ads")
+        || lower.contains("youtube.com/pagead/")
+        || lower.contains("get_midroll_info")
+    {
         return true;
     }
     let host = extract_host(url);
@@ -136,7 +139,6 @@ pub const ADBLOCK_COSMETIC_SCRIPT: &str = r#"
 (() => {
   if (window.__vnAdblockInjected) return;
   window.__vnAdblockInjected = true;
-  if (location.hostname.includes('youtube.com') || location.hostname.includes('youtu.be')) return;
   const report = () => {
     try { if (window.ipc) window.ipc.postMessage(JSON.stringify({ type: 'ad_blocked_js' })); } catch (_) {}
   };
@@ -194,6 +196,9 @@ pub const ADBLOCK_COSMETIC_SCRIPT: &str = r#"
     style.id = '__vnAdStyle';
     style.textContent = `
       ins.adsbygoogle,
+      .ytp-ad-module, .ytp-ad-overlay-container, .ytp-ad-text-overlay,
+      ytd-ad-slot-renderer, ytd-promoted-sparkles-web-renderer, ytd-display-ad-renderer,
+      #masthead-ad, #player-ads, ytm-promoted-sparkles-web-renderer,
       [id^="google_ads_iframe"],
       [id*="taboola-"],
       [class*="outbrain"],
@@ -233,6 +238,18 @@ pub const ADBLOCK_COSMETIC_SCRIPT: &str = r#"
   setInterval(sweep, 200);
   if (document.documentElement) {
     new MutationObserver(sweep).observe(document.documentElement, { childList: true, subtree: true });
+  }
+  if (location.hostname.includes('youtube.com')) {
+    setInterval(() => {
+      const skip = document.querySelector('.ytp-ad-skip-button, .ytp-skip-ad-button, .ytp-ad-skip-button-modern');
+      if (skip) { skip.click(); report(); }
+      const player = document.querySelector('.ad-showing video');
+      if (player && isFinite(player.duration) && player.duration > 0 && player.currentTime < player.duration - 0.1) {
+        player.muted = true;
+        player.currentTime = player.duration;
+        report();
+      }
+    }, 300);
   }
 })();
 "#;

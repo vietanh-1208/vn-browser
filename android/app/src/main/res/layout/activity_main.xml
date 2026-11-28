@@ -1,95 +1,292 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:background="#0B1120">
 
-    <!-- Top Address & Action Bar -->
+    <!-- Main Browser Column -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="54dp"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="8dp"
-        android:paddingEnd="8dp"
-        android:background="#0F172A">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="#0B1120">
 
-        <ImageButton
-            android:id="@+id/btnBack"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Back"
-            android:src="@android:drawable/ic_media_previous"
-            android:tint="#E2E8F0" />
+        <!-- Chrome-style Top Bar -->
+        <LinearLayout
+            android:id="@+id/topBar"
+            android:layout_width="match_parent"
+            android:layout_height="58dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:background="#0B1120">
 
-        <EditText
-            android:id="@+id/urlInput"
-            android:layout_width="0dp"
-            android:layout_height="38dp"
-            android:layout_weight="1"
-            android:layout_marginStart="6dp"
-            android:layout_marginEnd="6dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:background="#1E293B"
-            android:textColor="#F8FAFC"
-            android:textColorHint="#94A3B8"
-            android:hint="Tìm kiếm hoặc nhập URL..."
-            android:textSize="13.5sp"
-            android:singleLine="true"
-            android:imeOptions="actionGo"
-            android:inputType="textUri" />
+            <ImageButton
+                android:id="@+id/btnHome"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Home"
+                android:src="@drawable/ic_home" />
 
-        <TextView
-            android:id="@+id/adBadge"
-            android:layout_width="wrap_content"
-            android:layout_height="28dp"
-            android:gravity="center"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:background="#064E3B"
-            android:textColor="#34D399"
-            android:text="🛡️ 0"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+            <!-- Rounded Pill Omnibox -->
+            <LinearLayout
+                android:id="@+id/omniboxPill"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:layout_marginStart="6dp"
+                android:layout_marginEnd="6dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="8dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:background="@drawable/bg_omnibox">
 
-        <Button
-            android:id="@+id/btnTabs"
-            android:layout_width="42dp"
-            android:layout_height="34dp"
-            android:layout_marginStart="4dp"
-            android:padding="0dp"
-            android:text="1"
-            android:textSize="12sp"
-            android:textColor="#F8FAFC"
-            android:backgroundTint="#1E293B" />
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:layout_marginEnd="8dp"
+                    android:src="@drawable/ic_lock" />
 
-        <ImageButton
-            android:id="@+id/btnMenu"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Menu"
-            android:src="@android:drawable/ic_menu_more"
-            android:tint="#E2E8F0" />
+                <EditText
+                    android:id="@+id/urlInput"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@android:color/transparent"
+                    android:textColor="#F8FAFC"
+                    android:textColorHint="#94A3B8"
+                    android:hint="Tìm trên Google hoặc nhập URL"
+                    android:textSize="14sp"
+                    android:singleLine="true"
+                    android:selectAllOnFocus="true"
+                    android:imeOptions="actionGo"
+                    android:inputType="textUri" />
+
+                <TextView
+                    android:id="@+id/btnTranslate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="24dp"
+                    android:gravity="center"
+                    android:paddingStart="7dp"
+                    android:paddingEnd="7dp"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/bg_pill_badge"
+                    android:textColor="#38BDF8"
+                    android:text="🌐 Dịch"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/adBadge"
+                    android:layout_width="wrap_content"
+                    android:layout_height="24dp"
+                    android:gravity="center"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/bg_shield_pill"
+                    android:textColor="#34D399"
+                    android:text="🛡️ 0"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <ImageButton
+                android:id="@+id/btnReload"
+                android:layout_width="38dp"
+                android:layout_height="38dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Reload"
+                android:src="@drawable/ic_refresh" />
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="2.5dp"
+            android:max="100"
+            android:progressTint="#10B981"
+            android:progressBackgroundTint="#0B1120"
+            android:visibility="gone" />
+
+        <!-- Main WebView Container + Suggestions Overlay -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <FrameLayout
+                android:id="@+id/webContainer"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent" />
+
+            <ListView
+                android:id="@+id/suggestList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_marginEnd="12dp"
+                android:layout_marginTop="4dp"
+                android:background="@drawable/bg_suggest_box"
+                android:divider="#1E293B"
+                android:dividerHeight="1dp"
+                android:elevation="8dp"
+                android:visibility="gone" />
+        </FrameLayout>
+
+        <!-- Subtle Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#1E293B" />
+
+        <!-- Chrome-style Bottom Navigation Bar -->
+        <LinearLayout
+            android:id="@+id/bottomBar"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="#0F172A">
+
+            <ImageButton
+                android:id="@+id/btnBack"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Back"
+                android:src="@drawable/ic_arrow_back" />
+
+            <ImageButton
+                android:id="@+id/btnForward"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Forward"
+                android:src="@drawable/ic_arrow_forward" />
+
+            <FrameLayout
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1">
+                <ImageButton
+                    android:id="@+id/btnNewTab"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/bg_bottom_plus"
+                    android:contentDescription="New Tab"
+                    android:src="@drawable/ic_add" />
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/btnTabsContainer"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless">
+                <TextView
+                    android:id="@+id/btnTabs"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:background="@drawable/bg_tab_count"
+                    android:text="1"
+                    android:textColor="#F8FAFC"
+                    android:textSize="11.5sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
+
+            <ImageButton
+                android:id="@+id/btnMenu"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Menu"
+                android:src="@drawable/ic_more_vert" />
+        </LinearLayout>
     </LinearLayout>
 
-    <ProgressBar
-        android:id="@+id/progressBar"
-        style="?android:attr/progressBarStyleHorizontal"
+    <!-- Chrome-style Grid Tab Switcher Overlay -->
+    <LinearLayout
+        android:id="@+id/tabSwitcherOverlay"
         android:layout_width="match_parent"
-        android:layout_height="2.5dp"
-        android:max="100"
-        android:progressTint="#10B981"
-        android:progressBackgroundTint="#0F172A"
-        android:visibility="gone" />
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="#090E1A"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
 
-    <FrameLayout
-        android:id="@+id/webContainer"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="58dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="14dp"
+            android:paddingEnd="10dp"
+            android:background="#0F172A">
 
-</LinearLayout>
+            <TextView
+                android:id="@+id/tabSwitcherTitle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Đang mở 1 Tab"
+                android:textColor="#F8FAFC"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnTabNewIncog"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="🕵️ Ẩn danh"
+                android:textSize="12sp"
+                android:textColor="#F5F3FF"
+                android:backgroundTint="#6D28D9"
+                android:layout_marginEnd="6dp" />
+
+            <Button
+                android:id="@+id/btnTabNewNormal"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="+ Tab mới"
+                android:textSize="12sp"
+                android:textColor="#FFFFFF"
+                android:backgroundTint="#10B981"
+                android:layout_marginEnd="6dp" />
+
+            <TextView
+                android:id="@+id/btnTabSwitcherClose"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:gravity="center"
+                android:text="✕"
+                android:textColor="#E2E8F0"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <GridView
+            android:id="@+id/tabGrid"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:numColumns="2"
+            android:horizontalSpacing="12dp"
+            android:verticalSpacing="12dp"
+            android:padding="14dp"
+            android:clipToPadding="false" />
+    </LinearLayout>
+
+</FrameLayout>
