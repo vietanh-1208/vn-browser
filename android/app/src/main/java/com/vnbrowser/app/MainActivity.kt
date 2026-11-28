@@ -14,6 +14,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,7 +26,9 @@ import android.text.Editable
 import android.text.TextWatcher
 import android.util.Rational
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
@@ -69,6 +72,7 @@ data class BrowserTab(
     val incognito: Boolean,
     var blockedCount: Int = 0,
     var hasVideo: Boolean = false,
+    var thumbnail: Bitmap? = null,
     val webView: BgPlayWebView
 )
 
@@ -137,6 +141,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnBack: ImageButton
     private lateinit var btnForward: ImageButton
     private lateinit var progressBar: ProgressBar
+    private lateinit var swipePreview: ImageView
     private lateinit var webContainer: FrameLayout
     private lateinit var suggestList: ListView
     private lateinit var tabSwitcherOverlay: LinearLayout
@@ -160,6 +165,11 @@ class MainActivity : AppCompatActivity() {
     private var desktopMode = false
     private var searchEngine = "Google"
     private var totalBlocked = 0
+
+    private var customVideoView: View? = null
+    private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
+    private var fullscreenContainer: FrameLayout? = null
+    private var pendingPipFromFullscreen = false
 
     private val historyItems = mutableListOf<Pair<String, String>>()
     private val downloadItems = mutableListOf<String>()
@@ -227,7 +237,9 @@ class MainActivity : AppCompatActivity() {
         btnBack = findViewById(R.id.btnBack)
         btnForward = findViewById(R.id.btnForward)
         progressBar = findViewById(R.id.progressBar)
+        swipePreview = findViewById(R.id.swipePreview)
         webContainer = findViewById(R.id.webContainer)
+        setupOmniboxTabSwipe()
         suggestList = findViewById(R.id.suggestList)
         tabSwitcherOverlay = findViewById(R.id.tabSwitcherOverlay)
         tabSwitcherHeader = findViewById(R.id.tabSwitcherHeader)
@@ -296,6 +308,8 @@ class MainActivity : AppCompatActivity() {
                 val root = view.findViewById<View>(R.id.tabCardRoot)
                 val ico = view.findViewById<TextView>(R.id.tabCardIcon)
                 val title = view.findViewById<TextView>(R.id.tabCardTitle)
+                val preview = view.findViewById<ImageView>(R.id.tabCardPreview)
+                val fallback = view.findViewById<View>(R.id.tabCardFallback)
                 val badge = view.findViewById<TextView>(R.id.tabCardBadge)
                 val domain = view.findViewById<TextView>(R.id.tabCardDomain)
                 val close = view.findViewById<TextView>(R.id.tabCardClose)
@@ -312,6 +326,15 @@ class MainActivity : AppCompatActivity() {
                 title.text = cleanTitle
                 badge.visibility = if (isActive) View.VISIBLE else View.GONE
                 domain.text = if (tab.url == NEWTAB_URL) "Trang chủ VN Surf" else AdBlockEngine.extractHost(tab.url).ifBlank { tab.url }
+                if (tab.thumbnail != null && !tab.thumbnail!!.isRecycled) {
+                    preview.setImageBitmap(tab.thumbnail)
+                    preview.visibility = View.VISIBLE
+                    fallback.visibility = View.GONE
+                } else {
+                    preview.setImageDrawable(null)
+                    preview.visibility = View.GONE
+                    fallback.visibility = View.VISIBLE
+                }
 
                 view.setOnClickListener {
                     switchToTab(position)
@@ -630,7 +653,7 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {}
         }
 
-        val tab = BrowserTab(tabId, if (incognito) "Tab ẩn danh" else "Tab mới", url, incognito, 0, false, wv)
+        val tab = BrowserTab(tabId, if (incognito) "Tab ẩn danh" else "Tab mới", url, incognito, 0, false, null, wv)
 
         wv.addJavascriptInterface(object {
             @JavascriptInterface
@@ -865,10 +888,59 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 updateChromeUi()
+                mainHandler.postDelayed({ captureTabThumbnail(tab) }, 220)
             }
         }
 
         wv.webChromeClient = object : WebChromeClient() {
+            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                if (view == null) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
+                if (customVideoView != null) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
+                customVideoView = view
+                customVideoCallback = callback
+                val fc = FrameLayout(this@MainActivity).apply {
+                    setBackgroundColor(0xFF000000.toInt())
+                    addView(
+                        view,
+                        FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.MATCH_PARENT
+                        )
+                    )
+                }
+                fullscreenContainer = fc
+                rootFrame.addView(
+                    fc,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
+                )
+                if (pendingPipFromFullscreen) {
+                    pendingPipFromFullscreen = false
+                    launchPipParams()
+                }
+            }
+
+            override fun onHideCustomView() {
+                customVideoView?.let { v ->
+                    fullscreenContainer?.removeView(v)
+                }
+                fullscreenContainer?.let { fc ->
+                    rootFrame.removeView(fc)
+                }
+                customVideoView = null
+                fullscreenContainer = null
+                customVideoCallback?.onCustomViewHidden()
+                customVideoCallback = null
+            }
+
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                 progressBar.progress = newProgress
                 if (newProgress >= 100) progressBar.visibility = View.GONE
@@ -918,8 +990,106 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun captureTabThumbnail(tab: BrowserTab?) {
+        tab ?: return
+        val wv = tab.webView
+        if (wv.width <= 0 || wv.height <= 0) return
+        try {
+            val targetW = 360
+            val targetH = ((wv.height.toFloat() / wv.width.toFloat()) * targetW).toInt().coerceIn(200, 720)
+            val bmp = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.RGB_565)
+            val canvas = Canvas(bmp)
+            val scale = targetW.toFloat() / wv.width.toFloat()
+            canvas.scale(scale, scale)
+            canvas.translate(-wv.scrollX.toFloat(), -wv.scrollY.toFloat())
+            wv.draw(canvas)
+            tab.thumbnail = bmp
+        } catch (_: Exception) {
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupOmniboxTabSwipe() {
+        val touchSlop = ViewConfiguration.get(this).scaledTouchSlop.toFloat()
+        var downX = 0f
+        var downY = 0f
+        var dragging = false
+
+        val touchHandler = View.OnTouchListener { _, ev ->
+            if (tabs.size <= 1) return@OnTouchListener false
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = ev.rawX
+                    downY = ev.rawY
+                    dragging = false
+                    false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - downX
+                    val dy = ev.rawY - downY
+                    if (!dragging && kotlin.math.abs(dx) > maxOf(touchSlop, dp(14).toFloat()) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
+                        dragging = true
+                        hideKeyboard()
+                        captureTabThumbnail(currentTab())
+                    }
+                    if (dragging) {
+                        val targetIdx = if (dx > 0) activeTabIndex - 1 else activeTabIndex + 1
+                        if (targetIdx in tabs.indices) {
+                            webContainer.translationX = dx
+                            val thumb = tabs[targetIdx].thumbnail
+                            val w = webContainer.width.toFloat().coerceAtLeast(1f)
+                            if (thumb != null && !thumb.isRecycled) {
+                                swipePreview.setImageBitmap(thumb)
+                                swipePreview.visibility = View.VISIBLE
+                                swipePreview.translationX = if (dx > 0) dx - w else dx + w
+                            } else {
+                                swipePreview.visibility = View.GONE
+                            }
+                        } else {
+                            webContainer.translationX = dx * 0.25f
+                            swipePreview.visibility = View.GONE
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!dragging) return@OnTouchListener false
+                    dragging = false
+                    val dx = ev.rawX - downX
+                    val w = webContainer.width.toFloat().coerceAtLeast(1f)
+                    val targetIdx = if (dx > 0) activeTabIndex - 1 else activeTabIndex + 1
+                    if (targetIdx in tabs.indices && kotlin.math.abs(dx) > w * 0.20f) {
+                        val outX = if (dx > 0) w else -w
+                        swipePreview.animate().translationX(0f).setDuration(150).start()
+                        webContainer.animate().translationX(outX).setDuration(150).withEndAction {
+                            webContainer.translationX = 0f
+                            swipePreview.visibility = View.GONE
+                            swipePreview.translationX = 0f
+                            switchToTab(targetIdx)
+                        }.start()
+                    } else {
+                        val backX = if (dx > 0) -w else w
+                        swipePreview.animate().translationX(backX).setDuration(150).start()
+                        webContainer.animate().translationX(0f).setDuration(150).withEndAction {
+                            swipePreview.visibility = View.GONE
+                            swipePreview.translationX = 0f
+                        }.start()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+        topBar.setOnTouchListener(touchHandler)
+        omniboxPill.setOnTouchListener(touchHandler)
+        urlInput.setOnTouchListener(touchHandler)
+    }
+
     private fun switchToTab(index: Int) {
         if (index !in tabs.indices) return
+        currentTab()?.let { if (it !== tabs[index]) captureTabThumbnail(it) }
         activeTabIndex = index
         webContainer.removeAllViews()
         webContainer.addView(
@@ -1010,8 +1180,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyDarkModeToTab(tab: BrowserTab) {
         applyNativeChromeTheme()
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(tab.webView.settings, darkMode)
+        val isYt = tab.url.contains("youtube.com") || tab.url.contains("youtu.be")
+        val hasAlgoDark = WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)
+        if (hasAlgoDark) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(tab.webView.settings, darkMode && !isYt)
         }
         if (tab.url == NEWTAB_URL) {
             loadNewTabHome(tab)
@@ -1021,9 +1193,22 @@ class MainActivity : AppCompatActivity() {
             renderInternalTab(tab)
             return
         }
-        val js = if (darkMode) {
-            """
+        if (hasAlgoDark || !darkMode) {
+            tab.webView.evaluateJavascript("document.getElementById('__vnDarkCss')?.remove();", null)
+            return
+        }
+        val js = """
             (() => {
+              const cs = getComputedStyle(document.documentElement);
+              const bg = getComputedStyle(document.body || document.documentElement).backgroundColor;
+              const m = bg && bg.match(/\d+/g);
+              const isAlreadyDark = (cs && cs.colorScheme && cs.colorScheme.includes('dark')) ||
+                document.documentElement.hasAttribute('dark') ||
+                (m && m.length >= 3 && (0.299*m[0] + 0.587*m[1] + 0.114*m[2]) < 100);
+              if (isAlreadyDark) {
+                document.getElementById('__vnDarkCss')?.remove();
+                return;
+              }
               let st = document.getElementById('__vnDarkCss');
               if (!st) {
                 st = document.createElement('style');
@@ -1032,10 +1217,7 @@ class MainActivity : AppCompatActivity() {
                 (document.head || document.documentElement).appendChild(st);
               }
             })();
-            """.trimIndent()
-        } else {
-            "document.getElementById('__vnDarkCss')?.remove();"
-        }
+        """.trimIndent()
         tab.webView.evaluateJavascript(js, null)
     }
 
@@ -1179,6 +1361,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showTabsDialog() {
+        captureTabThumbnail(currentTab())
         refreshTabSwitcher()
         tabSwitcherOverlay.visibility = View.VISIBLE
     }
@@ -1399,6 +1582,27 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun launchPipParams() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                suggestList.visibility = View.GONE
+                tabSwitcherOverlay.visibility = View.GONE
+                topBar.visibility = View.GONE
+                bottomDivider.visibility = View.GONE
+                bottomBar.visibility = View.GONE
+                mainColumn.setPadding(0, 0, 0, 0)
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) {
+                pendingPipFromFullscreen = false
+                restoreFromPipUi()
+                Toast.makeText(this, "Thiết bị không cho phép mở cửa sổ nổi PiP", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     private fun enterVideoPip() {
         val tab = currentTab() ?: return
         if (tab.url.startsWith("https://vn.")) {
@@ -1408,71 +1612,51 @@ class MainActivity : AppCompatActivity() {
         tab.webView.evaluateJavascript(
             """
             (() => {
-              const v = document.querySelector('#movie_player video.html5-main-video') || document.querySelector('video');
-              if (!v) return 'NO_VIDEO';
-              if (!document.getElementById('__vnPipStyle')) {
-                const st = document.createElement('style');
-                st.id = '__vnPipStyle';
-                st.textContent = `
-                  html, body { overflow: hidden !important; background: #000 !important; }
-                  video {
-                    position: fixed !important;
-                    inset: 0 !important;
-                    top: 0 !important;
-                    left: 0 !important;
-                    width: 100vw !important;
-                    height: 100vh !important;
-                    max-width: 100vw !important;
-                    max-height: 100vh !important;
-                    object-fit: contain !important;
-                    background: #000 !important;
-                    z-index: 2147483646 !important;
-                    transform: none !important;
-                  }
-                  #masthead-container, ytm-mobile-topbar-renderer, .mobile-topbar-header,
-                  #player-control-overlay, .ytp-chrome-top, .ytp-chrome-bottom,
-                  #yt-topright-speedbar, #yt-speed-panel {
-                    display: none !important;
-                  }
-                `;
-                (document.head || document.documentElement).appendChild(st);
-              }
+              const vids = Array.from(document.querySelectorAll('video'));
+              const v = vids.find(x => x.readyState >= 1 || x.currentSrc || !x.paused) || vids[0];
+              if (!v || (!v.currentSrc && v.readyState === 0 && v.videoWidth === 0)) return 'NO_VIDEO';
+              document.getElementById('__vnDarkCss')?.remove();
               try { if (v.paused) v.play(); } catch (_) {}
-              return 'OK';
+              const fsTarget = document.getElementById('movie_player') || v;
+              try {
+                if (fsTarget.requestFullscreen) {
+                  fsTarget.requestFullscreen().catch(() => {});
+                  return 'FS_REQUESTED';
+                } else if (v.webkitEnterFullscreen) {
+                  v.webkitEnterFullscreen();
+                  return 'FS_REQUESTED';
+                }
+              } catch (_) {}
+              return 'FALLBACK';
             })();
             """.trimIndent()
         ) { res ->
             if (res?.contains("NO_VIDEO") == true) {
-                Toast.makeText(this, "Không tìm thấy video đang mở trên trang này!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Hãy mở một video đang phát để bật PiP!", Toast.LENGTH_SHORT).show()
                 return@evaluateJavascript
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                try {
-                    suggestList.visibility = View.GONE
-                    tabSwitcherOverlay.visibility = View.GONE
-                    topBar.visibility = View.GONE
-                    bottomDivider.visibility = View.GONE
-                    bottomBar.visibility = View.GONE
-                    mainColumn.setPadding(0, 0, 0, 0)
-                    val params = PictureInPictureParams.Builder()
-                        .setAspectRatio(Rational(16, 9))
-                        .build()
-                    enterPictureInPictureMode(params)
-                } catch (_: Exception) {
-                    restoreFromPipUi()
-                    Toast.makeText(this, "Thiết bị không cho phép mở cửa sổ nổi PiP", Toast.LENGTH_SHORT).show()
-                }
+            if (res?.contains("FS_REQUESTED") == true) {
+                pendingPipFromFullscreen = true
+                mainHandler.postDelayed({
+                    if (pendingPipFromFullscreen) {
+                        pendingPipFromFullscreen = false
+                        launchPipParams()
+                    }
+                }, 420)
+            } else {
+                launchPipParams()
             }
         }
     }
 
     private fun restoreFromPipUi() {
+        pendingPipFromFullscreen = false
         topBar.visibility = View.VISIBLE
         bottomDivider.visibility = View.VISIBLE
         bottomBar.visibility = View.VISIBLE
         ViewCompat.requestApplyInsets(rootFrame)
-        tabs.forEach { t ->
-            t.webView.evaluateJavascript("document.getElementById('__vnPipStyle')?.remove();", null)
+        if (customVideoView != null) {
+            currentTab()?.webView?.evaluateJavascript("if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});", null)
         }
     }
 
