@@ -15,6 +15,8 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -22,9 +24,11 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.provider.Settings
 import android.text.Editable
 import android.text.TextWatcher
 import android.util.Rational
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -170,6 +174,13 @@ class MainActivity : AppCompatActivity() {
     private var customVideoCallback: WebChromeClient.CustomViewCallback? = null
     private var fullscreenContainer: FrameLayout? = null
     private var pendingPipFromFullscreen = false
+    private var enteringPip = false
+    private var pipTab: BrowserTab? = null
+    private var pendingPipTab: BrowserTab? = null
+    private var pipFloatingView: LinearLayout? = null
+    private var pipWebHost: FrameLayout? = null
+    private var pipIsSystemOverlay = false
+    private var pipWindowParams: WindowManager.LayoutParams? = null
 
     private val historyItems = mutableListOf<Pair<String, String>>()
     private val downloadItems = mutableListOf<String>()
@@ -637,8 +648,9 @@ class MainActivity : AppCompatActivity() {
                 cacheMode = WebSettings.LOAD_NO_CACHE
             }
         }
-        if (darkMode && WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-            WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, true)
+        val initIsYt = url.contains("youtube.com") || url.contains("youtu.be")
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+            WebSettingsCompat.setAlgorithmicDarkeningAllowed(wv.settings, darkMode && !initIsYt)
         }
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             try {
@@ -835,7 +847,11 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView?, pageUrl: String?, favicon: Bitmap?) {
                 if (!pageUrl.isNullOrBlank() && pageUrl != "about:blank") tab.url = pageUrl
-                tab.hasVideo = tab.url.contains("youtube.com") || tab.url.contains("youtu.be")
+                val isYt = tab.url.contains("youtube.com") || tab.url.contains("youtu.be")
+                tab.hasVideo = isYt
+                if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                    WebSettingsCompat.setAlgorithmicDarkeningAllowed(tab.webView.settings, darkMode && !isYt)
+                }
                 progressBar.visibility = View.VISIBLE
                 updateChromeUi()
             }
@@ -1089,11 +1105,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchToTab(index: Int) {
         if (index !in tabs.indices) return
-        currentTab()?.let { if (it !== tabs[index]) captureTabThumbnail(it) }
+        if (tabs[index] === pipTab && pipFloatingView != null) {
+            closeFloatingPip(pauseVideo = false)
+        }
+        currentTab()?.let {
+            if (it !== tabs[index] && it !== pipTab) captureTabThumbnail(it)
+        }
         activeTabIndex = index
         webContainer.removeAllViews()
+        val wv = tabs[index].webView
+        (wv.parent as? ViewGroup)?.removeView(wv)
         webContainer.addView(
-            tabs[index].webView,
+            wv,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -1103,11 +1126,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closeTab(index: Int) {
+        if (index !in tabs.indices) return
+        if (tabs[index] === pipTab && pipFloatingView != null) {
+            closeFloatingPip(pauseVideo = true)
+        }
         if (tabs.size <= 1) {
             loadNewTabHome(currentTab())
             return
         }
         val removed = tabs.removeAt(index)
+        (removed.webView.parent as? ViewGroup)?.removeView(removed.webView)
         removed.webView.destroy()
         val next = activeTabIndex.coerceAtMost(tabs.lastIndex)
         switchToTab(next)
@@ -1583,51 +1611,131 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchPipParams() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                suggestList.visibility = View.GONE
-                tabSwitcherOverlay.visibility = View.GONE
-                topBar.visibility = View.GONE
-                bottomDivider.visibility = View.GONE
-                bottomBar.visibility = View.GONE
-                mainColumn.setPadding(0, 0, 0, 0)
-                val params = PictureInPictureParams.Builder()
-                    .setAspectRatio(Rational(16, 9))
-                    .build()
-                enterPictureInPictureMode(params)
-            } catch (_: Exception) {
-                pendingPipFromFullscreen = false
-                restoreFromPipUi()
-                Toast.makeText(this, "Thiết bị không cho phép mở cửa sổ nổi PiP", Toast.LENGTH_SHORT).show()
-            }
-        }
+        currentTab()?.let { openCocCocFloatingPip(it) }
     }
 
-    private fun enterVideoPip() {
+    private fun enterVideoPip(allowInAppOnly: Boolean = false) {
         val tab = currentTab() ?: return
+        if (pipFloatingView != null && pipTab === tab) {
+            expandFloatingPip()
+            return
+        }
         if (tab.url.startsWith("https://vn.")) {
             Toast.makeText(this, "Hãy mở YouTube hoặc trang có video để bật PiP!", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!allowInAppOnly && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            pendingPipTab = tab
+            AlertDialog.Builder(this)
+                .setTitle("Bật cửa sổ nổi trên mọi ứng dụng")
+                .setMessage("Để PiP nổi trên màn hình chính và các ứng dụng khác giống Cốc Cốc, hãy cấp quyền 'Hiển thị trên ứng dụng khác' cho VN Surf.")
+                .setPositiveButton("Cấp quyền ngay") { _, _ ->
+                    try {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    } catch (_: Exception) {
+                        pendingPipTab = null
+                        enterVideoPip(allowInAppOnly = true)
+                    }
+                }
+                .setNegativeButton("Chỉ nổi trong app") { _, _ ->
+                    pendingPipTab = null
+                    enterVideoPip(allowInAppOnly = true)
+                }
+                .setOnCancelListener { pendingPipTab = null }
+                .show()
             return
         }
         tab.webView.evaluateJavascript(
             """
             (() => {
               const vids = Array.from(document.querySelectorAll('video'));
-              const v = vids.find(x => x.readyState >= 1 || x.currentSrc || !x.paused) || vids[0];
-              if (!v || (!v.currentSrc && v.readyState === 0 && v.videoWidth === 0)) return 'NO_VIDEO';
+              const v = vids.find(x => (x.currentSrc || x.readyState >= 1) && !x.paused)
+                || vids.find(x => x.currentSrc || x.readyState >= 1 || x.videoWidth > 0);
+              if (!v) return 'NO_VIDEO';
               document.getElementById('__vnDarkCss')?.remove();
+              const pc = document.getElementById('player-container-id');
+              const mp = document.getElementById('movie_player');
+              const target = (pc && pc.contains(v)) ? pc
+                : (mp && mp.contains(v)) ? mp
+                : v;
+              if (!document.getElementById('__vnPipStyle')) {
+                const st = document.createElement('style');
+                st.id = '__vnPipStyle';
+                st.textContent = `
+                  html, body {
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    overflow: hidden !important;
+                    background: #000 !important;
+                  }
+                  ytm-mobile-topbar-renderer, #masthead-container, .mobile-topbar-header,
+                  #player-control-overlay, .ytp-chrome-top, .ytp-chrome-bottom,
+                  #yt-topright-speedbar, #yt-speed-panel {
+                    display: none !important;
+                  }
+                  [data-vn-pip-anc="1"] {
+                    transform: none !important;
+                    filter: none !important;
+                    contain: none !important;
+                    perspective: none !important;
+                    overflow: visible !important;
+                  }
+                  [data-vn-pip-root="1"],
+                  [data-vn-pip-root="1"] ytm-player,
+                  [data-vn-pip-root="1"] #movie_player,
+                  [data-vn-pip-root="1"] .html5-video-container {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    max-width: 100vw !important;
+                    max-height: 100vh !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    transform: none !important;
+                    background: #000 !important;
+                    z-index: 2147483647 !important;
+                  }
+                  [data-vn-pip-root="1"] video {
+                    position: fixed !important;
+                    inset: 0 !important;
+                    left: 0 !important;
+                    top: 0 !important;
+                    width: 100vw !important;
+                    height: 100vh !important;
+                    object-fit: contain !important;
+                    transform: none !important;
+                  }
+                `;
+                (document.head || document.documentElement).appendChild(st);
+              }
+              target.setAttribute('data-vn-pip-root', '1');
+              let cur = target.parentElement;
+              while (cur && cur !== document.documentElement) {
+                cur.setAttribute('data-vn-pip-anc', '1');
+                cur = cur.parentElement;
+              }
+              window.__vnPipGuardUntil = Date.now() + 3500;
+              if (!v.__vnPipPauseHooked) {
+                v.__vnPipPauseHooked = true;
+                v.addEventListener('pause', () => {
+                  if (Date.now() < (window.__vnPipGuardUntil || 0) && !v.ended) {
+                    setTimeout(() => {
+                      if (Date.now() < (window.__vnPipGuardUntil || 0) && v.paused && !v.ended) {
+                        try { document.getElementById('movie_player')?.playVideo?.(); } catch (_) {}
+                        try { v.play(); } catch (_) {}
+                      }
+                    }, 80);
+                  }
+                });
+              }
               try { if (v.paused) v.play(); } catch (_) {}
-              const fsTarget = document.getElementById('movie_player') || v;
-              try {
-                if (fsTarget.requestFullscreen) {
-                  fsTarget.requestFullscreen().catch(() => {});
-                  return 'FS_REQUESTED';
-                } else if (v.webkitEnterFullscreen) {
-                  v.webkitEnterFullscreen();
-                  return 'FS_REQUESTED';
-                }
-              } catch (_) {}
-              return 'FALLBACK';
+              return 'OK';
             })();
             """.trimIndent()
         ) { res ->
@@ -1635,17 +1743,291 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Hãy mở một video đang phát để bật PiP!", Toast.LENGTH_SHORT).show()
                 return@evaluateJavascript
             }
-            if (res?.contains("FS_REQUESTED") == true) {
-                pendingPipFromFullscreen = true
-                mainHandler.postDelayed({
-                    if (pendingPipFromFullscreen) {
-                        pendingPipFromFullscreen = false
-                        launchPipParams()
-                    }
-                }, 420)
-            } else {
-                launchPipParams()
+            openCocCocFloatingPip(tab)
+        }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun openCocCocFloatingPip(tab: BrowserTab) {
+        if (pipFloatingView != null) {
+            closeFloatingPip(pauseVideo = tab !== pipTab)
+        }
+        val canOverlay = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)
+        val dm = resources.displayMetrics
+        val wPx = dp(280).coerceAtMost((dm.widthPixels * 0.72f).toInt())
+        val hBar = dp(32)
+        val hVid = (wPx * 9 / 16)
+        val totalH = hBar + hVid
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            elevation = dp(10).toFloat()
+            clipToOutline = true
+            background = GradientDrawable().apply {
+                setColor(0xFF0F172A.toInt())
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), 0xFF38BDF8.toInt())
             }
+        }
+
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(0xFF0F172A.toInt())
+            setPadding(dp(8), 0, dp(4), 0)
+        }
+        val titleTv = TextView(this).apply {
+            text = "⠿  VN PiP"
+            setTextColor(0xFFE2E8F0.toInt())
+            textSize = 11f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        bar.addView(titleTv)
+
+        fun makeBarBtn(label: String, bg: Int = 0x00000000, fg: Int = 0xFFF8FAFC.toInt()): TextView {
+            return TextView(this).apply {
+                text = label
+                setTextColor(fg)
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setPadding(dp(7), dp(4), dp(7), dp(4))
+                if (bg != 0) setBackgroundColor(bg)
+            }
+        }
+
+        if (!canOverlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val outBtn = makeBarBtn("↗ Ngoài", fg = 0xFF38BDF8.toInt())
+            outBtn.setOnClickListener {
+                try {
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                    startActivity(intent)
+                    Toast.makeText(this, "Bật 'Cho phép hiển thị trên ứng dụng khác' rồi quay lại!", Toast.LENGTH_LONG).show()
+                } catch (_: Exception) {}
+            }
+            bar.addView(outBtn)
+        }
+
+        val playPauseBtn = makeBarBtn("⏯")
+        playPauseBtn.setOnClickListener {
+            pipTab?.webView?.evaluateJavascript(
+                """
+                (() => {
+                  const vids = Array.from(document.querySelectorAll('video'));
+                  const v = vids.find(x => x.currentSrc || x.readyState >= 1 || x.videoWidth > 0);
+                  if (!v) return;
+                  if (v.paused) {
+                    try { document.getElementById('movie_player')?.playVideo?.(); } catch(_) {}
+                    try { v.play(); } catch(_) {}
+                  } else {
+                    try { document.getElementById('movie_player')?.pauseVideo?.(); } catch(_) {}
+                    try { v.pause(); } catch(_) {}
+                  }
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+        bar.addView(playPauseBtn)
+
+        val expandBtn = makeBarBtn("⛶")
+        expandBtn.setOnClickListener { expandFloatingPip() }
+        bar.addView(expandBtn)
+
+        val closeBtn = makeBarBtn("✕", fg = 0xFFF87171.toInt())
+        closeBtn.setOnClickListener { closeFloatingPip(pauseVideo = true) }
+        bar.addView(closeBtn)
+
+        val host = FrameLayout(this).apply {
+            setBackgroundColor(0xFF000000.toInt())
+        }
+        card.addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, hBar))
+        card.addView(host, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, hVid))
+
+        val initX = (dm.widthPixels - wPx - dp(12)).coerceAtLeast(0)
+        val initY = (dm.heightPixels - totalH - dp(90)).coerceAtLeast(dp(40))
+
+        (tab.webView.parent as? ViewGroup)?.removeView(tab.webView)
+        host.addView(
+            tab.webView,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+
+        pipTab = tab
+        pipFloatingView = card
+        pipWebHost = host
+
+        if (canOverlay) {
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+            val lp = WindowManager.LayoutParams(
+                wPx,
+                totalH,
+                type,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = initX
+                y = initY
+            }
+            pipWindowParams = lp
+            pipIsSystemOverlay = true
+            try {
+                windowManager.addView(card, lp)
+                startPipForegroundService(tab)
+            } catch (_: Exception) {
+                pipIsSystemOverlay = false
+                pipWindowParams = null
+            }
+        }
+
+        if (!pipIsSystemOverlay) {
+            val flp = FrameLayout.LayoutParams(wPx, totalH).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = initX
+                topMargin = initY
+            }
+            rootFrame.addView(card, flp)
+            Toast.makeText(this, "📺 Đã bật PiP! Kéo thanh trên để di chuyển", Toast.LENGTH_SHORT).show()
+        }
+
+        var dDownX = 0f
+        var dDownY = 0f
+        var startX = initX
+        var startY = initY
+        bar.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dDownX = ev.rawX
+                    dDownY = ev.rawY
+                    if (pipIsSystemOverlay) {
+                        startX = pipWindowParams?.x ?: initX
+                        startY = pipWindowParams?.y ?: initY
+                    } else {
+                        val flp = card.layoutParams as? FrameLayout.LayoutParams
+                        startX = flp?.leftMargin ?: initX
+                        startY = flp?.topMargin ?: initY
+                    }
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val nx = (startX + (ev.rawX - dDownX)).toInt().coerceIn(0, (dm.widthPixels - wPx).coerceAtLeast(0))
+                    val ny = (startY + (ev.rawY - dDownY)).toInt().coerceIn(0, (dm.heightPixels - totalH).coerceAtLeast(0))
+                    if (pipIsSystemOverlay) {
+                        pipWindowParams?.let { lp ->
+                            lp.x = nx
+                            lp.y = ny
+                            try { windowManager.updateViewLayout(card, lp) } catch (_: Exception) {}
+                        }
+                    } else {
+                        (card.layoutParams as? FrameLayout.LayoutParams)?.let { flp ->
+                            flp.leftMargin = nx
+                            flp.topMargin = ny
+                            card.layoutParams = flp
+                        }
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        // Keep main browser usable on another tab while video floats
+        val otherIdx = tabs.indexOfFirst { it !== tab }
+        if (otherIdx >= 0) {
+            switchToTab(otherIdx)
+        } else {
+            openNewTab(NEWTAB_URL, incognito = tab.incognito)
+        }
+
+        tab.webView.onResume()
+        tab.webView.resumeTimers()
+        val resumeJs = """
+            (() => {
+              const vids = Array.from(document.querySelectorAll('video'));
+              const v = vids.find(x => (x.currentSrc || x.readyState >= 1) && x.currentTime > 0)
+                || vids.find(x => x.currentSrc || x.readyState >= 1 || x.videoWidth > 0);
+              if (v && v.paused && !v.ended) {
+                try { document.getElementById('movie_player')?.playVideo?.(); } catch(_) {}
+                try { v.play(); } catch(_) {}
+              }
+            })();
+        """.trimIndent()
+        mainHandler.postDelayed({ if (pipFloatingView != null) tab.webView.evaluateJavascript(resumeJs, null) }, 140)
+        mainHandler.postDelayed({ if (pipFloatingView != null) tab.webView.evaluateJavascript(resumeJs, null) }, 450)
+        mainHandler.postDelayed({ if (pipFloatingView != null) tab.webView.evaluateJavascript(resumeJs, null) }, 900)
+        mainHandler.postDelayed({ if (pipFloatingView != null) tab.webView.evaluateJavascript(resumeJs, null) }, 1400)
+    }
+
+    private fun startPipForegroundService(tab: BrowserTab) {
+        try {
+            val svc = Intent(this, MediaPlaybackService::class.java).apply {
+                action = MediaPlaybackService.ACTION_START
+                putExtra(MediaPlaybackService.EXTRA_TITLE, tab.title.ifBlank { "VN Surf PiP" })
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(svc)
+            } else {
+                startService(svc)
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun expandFloatingPip() {
+        val t = pipTab ?: return
+        val idx = tabs.indexOf(t)
+        closeFloatingPip(pauseVideo = false)
+        if (idx >= 0) {
+            switchToTab(idx)
+        }
+    }
+
+    private fun closeFloatingPip(pauseVideo: Boolean) {
+        val card = pipFloatingView
+        val host = pipWebHost
+        val t = pipTab
+        pipFloatingView = null
+        pipWebHost = null
+        pipTab = null
+        pipWindowParams = null
+        val wasSys = pipIsSystemOverlay
+        pipIsSystemOverlay = false
+
+        if (card != null) {
+            try {
+                if (wasSys) windowManager.removeViewImmediate(card)
+                else (card.parent as? ViewGroup)?.removeView(card)
+            } catch (_: Exception) {}
+        }
+        if (t != null) {
+            (t.webView.parent as? ViewGroup)?.removeView(t.webView)
+            host?.removeAllViews()
+            t.webView.evaluateJavascript(
+                """
+                (() => {
+                  window.__vnPipGuardUntil = 0;
+                  document.getElementById('__vnPipStyle')?.remove();
+                  document.querySelectorAll('[data-vn-pip-anc]').forEach(el => el.removeAttribute('data-vn-pip-anc'));
+                  document.querySelectorAll('[data-vn-pip-root]').forEach(el => el.removeAttribute('data-vn-pip-root'));
+                  ${if (pauseVideo) "document.querySelectorAll('video,audio').forEach(m => { try { m.pause(); } catch(_) {} });" else ""}
+                })();
+                """.trimIndent(),
+                null
+            )
+            applyDarkModeToTab(t)
+        }
+        if (wasSys) {
+            try { stopService(Intent(this, MediaPlaybackService::class.java)) } catch (_: Exception) {}
         }
     }
 
@@ -1655,34 +2037,87 @@ class MainActivity : AppCompatActivity() {
         bottomDivider.visibility = View.VISIBLE
         bottomBar.visibility = View.VISIBLE
         ViewCompat.requestApplyInsets(rootFrame)
-        if (customVideoView != null) {
-            currentTab()?.webView?.evaluateJavascript("if(document.fullscreenElement)document.exitFullscreen().catch(()=>{});", null)
+        tabs.forEach { t ->
+            t.webView.evaluateJavascript(
+                """
+                (() => {
+                  document.getElementById('__vnPipStyle')?.remove();
+                  document.querySelectorAll('[data-vn-pip-anc]').forEach(el => el.removeAttribute('data-vn-pip-anc'));
+                  document.querySelectorAll('[data-vn-pip-root]').forEach(el => el.removeAttribute('data-vn-pip-root'));
+                })();
+                """.trimIndent(),
+                null
+            )
+        }
+        currentTab()?.let { applyDarkModeToTab(it) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val pending = pendingPipTab
+        if (pending != null && (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))) {
+            pendingPipTab = null
+            val idx = tabs.indexOf(pending)
+            if (idx >= 0) {
+                switchToTab(idx)
+                enterVideoPip(allowInAppOnly = false)
+                return
+            }
+        }
+        if (pipFloatingView != null && !pipIsSystemOverlay &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this))
+        ) {
+            val t = pipTab
+            if (t != null) {
+                openCocCocFloatingPip(t)
+            }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (isInPictureInPictureMode || enteringPip || pipFloatingView != null) {
+            pipTab?.webView?.let { wv ->
+                wv.onResume()
+                wv.resumeTimers()
+            }
+            currentTab()?.webView?.let { wv ->
+                wv.onResume()
+                wv.resumeTimers()
+            }
         }
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        if (isInPictureInPictureMode) {
-            topBar.visibility = View.GONE
-            bottomDivider.visibility = View.GONE
-            bottomBar.visibility = View.GONE
-            suggestList.visibility = View.GONE
-            tabSwitcherOverlay.visibility = View.GONE
-            mainColumn.setPadding(0, 0, 0, 0)
-        } else {
+        if (!isInPictureInPictureMode) {
+            enteringPip = false
             restoreFromPipUi()
         }
     }
 
     override fun onStart() {
         super.onStart()
-        try {
-            stopService(Intent(this, MediaPlaybackService::class.java))
-        } catch (_: Exception) {}
+        if (!pipIsSystemOverlay) {
+            try {
+                stopService(Intent(this, MediaPlaybackService::class.java))
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onStop() {
         super.onStop()
+        if (pipIsSystemOverlay && pipTab != null) {
+            pipTab?.let { startPipForegroundService(it) }
+            pipTab?.webView?.let { wv ->
+                wv.onResume()
+                wv.resumeTimers()
+                val keepJs = "(() => { const vids = Array.from(document.querySelectorAll('video')); const v = vids.find(x => x.currentSrc || x.readyState >= 1 || x.videoWidth > 0); if (v && v.paused && !v.ended) { try { document.getElementById('movie_player')?.playVideo?.(); } catch(_) {} try { v.play(); } catch(_) {} } })();"
+                mainHandler.postDelayed({ if (pipIsSystemOverlay) wv.evaluateJavascript(keepJs, null) }, 200)
+                mainHandler.postDelayed({ if (pipIsSystemOverlay) wv.evaluateJavascript(keepJs, null) }, 600)
+            }
+            return
+        }
         if (bgPlayEnabled && !isInPictureInPictureMode && !isFinishing) {
             val mediaTab = tabs.firstOrNull {
                 it.hasVideo || it.url.contains("youtube.com") || it.url.contains("soundcloud.com") || it.url.contains("zingmp3.vn")
@@ -1711,6 +2146,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        closeFloatingPip(pauseVideo = true)
         try {
             unregisterReceiver(pauseMediaReceiver)
         } catch (_: Exception) {}

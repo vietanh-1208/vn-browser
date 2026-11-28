@@ -38,18 +38,22 @@ object AdBlockEngine {
         if (!adblockEnabled) return false
         val pageHost = extractHost(pageUrl)
         val reqHost = extractHost(requestUrl)
-        if (pageHost == "youtube.com" || pageHost.endsWith(".youtube.com") ||
-            reqHost == "youtube.com" || reqHost.endsWith(".youtube.com") ||
-            isYouTubeMediaHost(reqHost)
-        ) {
+        if (isYouTubeMediaHost(reqHost)) {
             return false
+        }
+        val lower = requestUrl.lowercase(Locale.ROOT)
+        if (reqHost == "youtube.com" || reqHost.endsWith(".youtube.com")) {
+            return lower.contains("/pagead/") ||
+                lower.contains("/api/stats/ads") ||
+                lower.contains("/ptracking") ||
+                lower.contains("/get_midroll_") ||
+                lower.contains("ad_type=")
         }
         if (reqHost.isEmpty()) return false
 
         if (blockedHosts.any { reqHost == it || reqHost.endsWith(".$it") || reqHost.contains(it) }) {
             return true
         }
-        val lower = requestUrl.lowercase(Locale.ROOT)
         return lower.contains("/ads/") || lower.contains("banner_ad") ||
             lower.contains("popunder") || lower.contains("affiliatecode=")
     }

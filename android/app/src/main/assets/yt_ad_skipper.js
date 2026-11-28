@@ -135,6 +135,119 @@
     } catch (e) {}
   })();
 
+  // Cốc Cốc / uBlock-style YouTube ad-payload stripper (strips ads before player loads)
+  function stripYtAdPayload(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (
+      document.documentElement &&
+      document.documentElement.getAttribute('data-yt-adblock-disabled') === 'true'
+    ) {
+      return obj;
+    }
+    try {
+      let stripped = false;
+      if ('adPlacements' in obj) {
+        obj.adPlacements = [];
+        stripped = true;
+      }
+      if ('playerAds' in obj) {
+        obj.playerAds = [];
+        stripped = true;
+      }
+      if ('adSlots' in obj) {
+        obj.adSlots = [];
+        stripped = true;
+      }
+      if ('adBreakHeartbeatParams' in obj) {
+        delete obj.adBreakHeartbeatParams;
+        stripped = true;
+      }
+      if (obj.playerResponse && typeof obj.playerResponse === 'object') {
+        stripYtAdPayload(obj.playerResponse);
+      }
+      if (stripped) {
+        reportAdSkipped();
+      }
+    } catch (e) {}
+    return obj;
+  }
+
+  (function installYtPayloadAdStripper() {
+    try {
+      let _ytInitPlayer = window.ytInitialPlayerResponse;
+      if (_ytInitPlayer && typeof _ytInitPlayer === 'object') {
+        stripYtAdPayload(_ytInitPlayer);
+      }
+      Object.defineProperty(window, 'ytInitialPlayerResponse', {
+        configurable: true,
+        enumerable: true,
+        get() {
+          return _ytInitPlayer;
+        },
+        set(val) {
+          _ytInitPlayer = stripYtAdPayload(val);
+        }
+      });
+    } catch (e) {}
+
+    try {
+      const origParse = JSON.parse;
+      JSON.parse = function (text, reviver) {
+        const res = origParse.call(this, text, reviver);
+        if (
+          typeof text === 'string' &&
+          (text.includes('adPlacements') ||
+            text.includes('playerAds') ||
+            text.includes('adSlots'))
+        ) {
+          stripYtAdPayload(res);
+        }
+        return res;
+      };
+    } catch (e) {}
+
+    try {
+      const origFetch = window.fetch;
+      if (typeof origFetch === 'function') {
+        window.fetch = async function (input, init) {
+          const resp = await origFetch.apply(this, arguments);
+          try {
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            if (
+              url.includes('/youtubei/v1/player') ||
+              url.includes('/youtubei/v1/next') ||
+              url.includes('/youtubei/v1/browse') ||
+              url.includes('/youtubei/v1/search')
+            ) {
+              if (
+                document.documentElement &&
+                document.documentElement.getAttribute('data-yt-adblock-disabled') === 'true'
+              ) {
+                return resp;
+              }
+              const clone = resp.clone();
+              const txt = await clone.text();
+              if (
+                txt.includes('adPlacements') ||
+                txt.includes('playerAds') ||
+                txt.includes('adSlots')
+              ) {
+                const data = JSON.parse(txt);
+                stripYtAdPayload(data);
+                return new Response(JSON.stringify(data), {
+                  status: resp.status,
+                  statusText: resp.statusText,
+                  headers: resp.headers
+                });
+              }
+            }
+          } catch (e) {}
+          return resp;
+        };
+      }
+    } catch (e) {}
+  })();
+
   const YT_STYLE_CSS = `
     html:not([data-yt-banners-disabled="true"]) ytd-ad-slot-renderer,
     html:not([data-yt-banners-disabled="true"]) ytd-in-feed-ad-layout-renderer,
@@ -373,6 +486,54 @@
       transition: opacity 0.2s ease !important;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7) !important;
       border: 1px solid rgba(0, 255, 204, 0.3) !important;
+    }
+
+    /* Fix YouTube Mobile search header & input becoming solid black / invisible in WebView dark mode */
+    ytm-searchbox,
+    form.searchbox-form,
+    ytm-mobile-topbar-renderer[data-mode="searching"],
+    ytm-mobile-topbar-renderer[data-mode="searching"] .mobile-topbar-header-content {
+      background-color: #0f0f0f !important;
+      color: #ffffff !important;
+      color-scheme: dark !important;
+    }
+
+    ytm-searchbox input,
+    form.searchbox-form input,
+    input.searchbox-input,
+    .searchbox-input-wrapper input,
+    ytm-searchbox .ytSearchboxComponentInput {
+      background-color: #272727 !important;
+      color: #ffffff !important;
+      -webkit-text-fill-color: #ffffff !important;
+      caret-color: #ffffff !important;
+      border: 1px solid rgba(255, 255, 255, 0.22) !important;
+      border-radius: 20px !important;
+      padding: 6px 14px !important;
+      opacity: 1 !important;
+      visibility: visible !important;
+    }
+
+    ytm-searchbox input::placeholder,
+    form.searchbox-form input::placeholder,
+    input.searchbox-input::placeholder,
+    ytm-searchbox .ytSearchboxComponentInput::placeholder {
+      color: #aaaaaa !important;
+      -webkit-text-fill-color: #aaaaaa !important;
+      opacity: 1 !important;
+    }
+
+    ytm-searchbox button,
+    form.searchbox-form button,
+    ytm-searchbox yt-icon,
+    ytm-searchbox svg,
+    form.searchbox-form svg,
+    ytm-mobile-topbar-renderer[data-mode="searching"] button,
+    ytm-mobile-topbar-renderer[data-mode="searching"] svg {
+      color: #ffffff !important;
+      fill: currentColor !important;
+      opacity: 1 !important;
+      visibility: visible !important;
     }
 
     @media (max-width: 680px) {

@@ -116,18 +116,25 @@ pub fn is_blocked_url(url: &str, page_host: &str, enabled: bool, whitelist: &[St
     {
         return false;
     }
-    if page_host == "youtube.com" || page_host.ends_with(".youtube.com") {
+    let lower = url.to_lowercase();
+    let host = extract_host(url);
+    if host.ends_with(".googlevideo.com") || host.ends_with(".ytimg.com") {
         return false;
     }
-    let lower = url.to_lowercase();
+    if host == "youtube.com" || host.ends_with(".youtube.com") {
+        return lower.contains("/pagead/")
+            || lower.contains("/api/stats/ads")
+            || lower.contains("/ptracking")
+            || lower.contains("/get_midroll_")
+            || lower.contains("ad_type=");
+    }
     if lower.contains("affiliatecode=")
         || lower.contains("aff_id=")
         || lower.contains("/popunder")
     {
         return true;
     }
-    let host = extract_host(url);
-    if host.is_empty() || host == "youtube.com" || host.ends_with(".youtube.com") {
+    if host.is_empty() {
         return false;
     }
     AD_TRACKER_DOMAINS
@@ -278,6 +285,12 @@ mod tests {
         ));
         assert!(!is_blocked_url(
             "https://www.youtube.com/watch?v=123",
+            "youtube.com",
+            true,
+            &[]
+        ));
+        assert!(is_blocked_url(
+            "https://www.youtube.com/api/stats/ads?v=123",
             "youtube.com",
             true,
             &[]
